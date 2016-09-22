@@ -13,6 +13,10 @@
 import six
 import time
 
+import copy
+from oslo_context import context as oslo_context
+from senlin.db import api as db_api
+
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_utils import timeutils
@@ -498,6 +502,25 @@ class Action(object):
         }
         return action_dict
 
+    def _build_conn_params(self, user, project):
+        """Build connection params for specific user and project.
+
+        :param user: The ID of the user for which a trust will be used.
+        :param project: The ID of the project for which a trust will be used.
+        :returns: A dict containing the required parameters for connection
+                  creation.
+        """
+        cred = db_api.cred_get(oslo_context.get_current(), user, project)
+        if cred is None:
+            raise exception.TrustNotFound(trustor=user)
+
+        trust_id = cred.cred['openstack']['trust']
+
+        # This is supposed to be trust-based authentication
+        params = copy.deepcopy(self.context)
+        params['trust_id'] = trust_id
+
+        return params
 
 # TODO(Yanyan Hu): Replace context parameter with session parameter
 def ActionProc(context, action_id):

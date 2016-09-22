@@ -519,21 +519,20 @@ class ClusterAction(base.Action):
 
         :returns: A tuple containing the result and the corresponding reason.
         """
-        f = file("/home/bran/mmmmm",'a')
+        f = file("/opt/stack/mmmmm",'a')
         f.write("hello")
         f.close()
         reason = ""
-        workflow_name = "hello"
-        kwargs = {
-            "definition": "hello.yaml",
-            "name": workflow_name
-        }
+        #workflow_name = "hello"
+        #kwargs = {
+        #    "definition": "hello.yaml",
+        #    "name": workflow_name
+        #}
         try:
-            hello_workflow = self.mistral().workflow_create(**kwargs)
-        except exc.InternalError as ex:
-            raise exc.EResourceCreation(type='workflow', message=ex.message)
-        try:
-         reason = os.popen("ls").read()
+            hello_workflow = self.mistral().workflow_create("hello.yaml")
+            f = file("/opt/stack/mmmmm",'a')
+            f.write("yaml")
+            f.close()
         except Exception,e:
          LOG.error(str(e))
         return self.RES_OK, reason
