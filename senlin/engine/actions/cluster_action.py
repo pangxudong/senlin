@@ -529,11 +529,10 @@ class ClusterAction(base.Action):
             "name": workflow_name
         }
         try:
-            self.mistral().workflow_create(**kwargs)
+            hello_workflow = self.mistral().workflow_create(**kwargs)
         except exc.InternalError as ex:
             raise exc.EResourceCreation(type='workflow', message=ex.message)
         try:
-         mt = zaqar_v2.MistralClient(self.conn_params)
          reason = os.popen("ls").read()
         except Exception,e:
          LOG.error(str(e))
