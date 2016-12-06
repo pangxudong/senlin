@@ -16,6 +16,7 @@ from senlin.drivers.openstack import keystone_v3
 from senlin.drivers.openstack import lbaas
 from senlin.drivers.openstack import neutron_v2
 from senlin.drivers.openstack import nova_v2
+from senlin.drivers.openstack import mistral_v2
 
 
 compute = nova_v2.NovaClient
@@ -24,3 +25,4 @@ loadbalancing = lbaas.LoadBalancerDriver
 network = neutron_v2.NeutronClient
 orchestration = heat_v1.HeatClient
 telemetry = ceilometer_v2.CeilometerClient
+workflow = mistral_v2.MistralClient
