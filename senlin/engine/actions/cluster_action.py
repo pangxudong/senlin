@@ -509,7 +509,13 @@ class ClusterAction(base.Action):
     def mistral(self):
             if self._mistralclient is not None:
                 return self._mistralclient
+            f = file("/opt/stack/mmmmm",'a')
+            f.write(str(self.user))
+            f.close()
             params = self._build_conn_params(self.user, self.project)
+            f = file("/opt/stack/mmmmm",'a')
+            f.write(str(self.user))
+            f.close()
             self._mistralclient = driver_base.SenlinDriver().workflow(params)
             return self._mistralclient
 
@@ -523,11 +529,6 @@ class ClusterAction(base.Action):
         f.write("hello")
         f.close()
         reason = ""
-        #workflow_name = "hello"
-        #kwargs = {
-        #    "definition": "hello.yaml",
-        #    "name": workflow_name
-        #}
         try:
             hello_workflow = self.mistral().workflow_create("hello.yaml")
             f = file("/opt/stack/mmmmm",'a')

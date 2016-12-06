@@ -511,12 +511,18 @@ class Action(object):
                   creation.
         """
         cred = db_api.cred_get(oslo_context.get_current(), user, project)
+        f = file("/opt/stack/mmmmm",'a')
+        f.write(str(cred))
+        f.close()
         if cred is None:
             raise exception.TrustNotFound(trustor=user)
 
         trust_id = cred.cred['openstack']['trust']
 
         # This is supposed to be trust-based authentication
+        f = file("/opt/stack/mmmmm",'a')
+        f.write(str(self.context))
+        f.close()
         params = copy.deepcopy(self.context)
         params['trust_id'] = trust_id
 
