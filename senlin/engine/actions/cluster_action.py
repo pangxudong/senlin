@@ -520,8 +520,11 @@ class ClusterAction(base.Action):
         :returns: A tuple containing the result and the corresponding reason.
         """
         reason = ""
+        kwargs = {
+            "definition": "hello.yaml"
+        }
         try:
-            hello_workflow = self.mistral().workflow_create("hello.yaml")
+            hello_workflow = self.mistral().workflow_create(**kwargs)
             f = file("/opt/stack/mmmmm",'a')
             f.write("yaml")
             f.close()
