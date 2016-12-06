@@ -510,9 +510,6 @@ class ClusterAction(base.Action):
             if self._mistralclient is not None:
                 return self._mistralclient
             params = self._build_conn_params(self.user, self.project)
-            f = file("/opt/stack/mmmmm",'a')
-            f.write(str(self.user))
-            f.close()
             self._mistralclient = driver_base.SenlinDriver().workflow(params)
             return self._mistralclient
 
