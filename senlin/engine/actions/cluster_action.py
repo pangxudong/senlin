@@ -509,9 +509,6 @@ class ClusterAction(base.Action):
     def mistral(self):
             if self._mistralclient is not None:
                 return self._mistralclient
-            f = file("/opt/stack/mmmmm",'a')
-            f.write(str(self.user))
-            f.close()
             params = self._build_conn_params(self.user, self.project)
             f = file("/opt/stack/mmmmm",'a')
             f.write(str(self.user))
@@ -525,9 +522,6 @@ class ClusterAction(base.Action):
 
         :returns: A tuple containing the result and the corresponding reason.
         """
-        f = file("/opt/stack/mmmmm",'a')
-        f.write("hello")
-        f.close()
         reason = ""
         try:
             hello_workflow = self.mistral().workflow_create("hello.yaml")

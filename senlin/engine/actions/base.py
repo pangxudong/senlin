@@ -511,9 +511,6 @@ class Action(object):
                   creation.
         """
         cred = db_api.cred_get(oslo_context.get_current(), user, project)
-        f = file("/opt/stack/mmmmm",'a')
-        f.write(str(cred))
-        f.close()
         if cred is None:
             raise exception.TrustNotFound(trustor=user)
 
