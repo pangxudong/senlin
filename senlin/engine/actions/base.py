@@ -520,10 +520,12 @@ class Action(object):
         trust_id = cred.cred['openstack']['trust']
 
         # This is supposed to be trust-based authentication
-        f = file("/opt/stack/mmmmm",'a')
-        f.write(str(self.context))
-        f.close()
-        params = copy.deepcopy(self.context)
+        params = {
+            'username': cred.get('username'),
+            'password': cred.get('password'),
+            'auth_url': cred.get('auth_url'),
+            'user_domain_name': cred.get('user_domain_name')
+        }
         params['trust_id'] = trust_id
 
         return params
