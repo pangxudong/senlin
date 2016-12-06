@@ -510,19 +510,20 @@ class Action(object):
         :returns: A dict containing the required parameters for connection
                   creation.
         """
+        service_creds = req_context.get_service_context()
+        params = {
+            'username': service_creds.get('username'),
+            'password': service_creds.get('password'),
+            'auth_url': service_creds.get('auth_url'),
+            'user_domain_name': service_creds.get('user_domain_name')
+        }
+
         cred = db_api.cred_get(oslo_context.get_current(), user, project)
         if cred is None:
             raise exception.TrustNotFound(trustor=user)
 
         trust_id = cred.cred['openstack']['trust']
 
-        # This is supposed to be trust-based authentication
-        params = {
-            'username': cred.get('username'),
-            'password': cred.get('password'),
-            'auth_url': cred.get('auth_url'),
-            'user_domain_name': cred.get('user_domain_name')
-        }
         params['trust_id'] = trust_id
 
         return params
