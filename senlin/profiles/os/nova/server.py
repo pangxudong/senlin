@@ -750,19 +750,21 @@ class ServerProfile(base.Profile):
 
     def do_recover(self, obj, **options):
 
-        # kwargs = {
-        #     "definition": "hello.yaml"
-        # }
-        # try:
-        #     hello_workflow = self.mistral().workflow_create(**kwargs)
-        #     f = file("/opt/stack/mmmmm",'a')
-        #     f.write("yaml")
-        #     f.close()
-        # except Exception,e:
-        #  LOG.error(str(e))
-
         if 'operation' in options:
-            if options['operation'] == 'REBUILD':
+            if options['operation'] == "COLD_MIGRATION":
+                kwargs = {
+                    "definition": "hello.yaml"
+                }
+                try:
+                    hello_workflow = self.mistral().workflow_create(**kwargs)
+                    f = file("/opt/stack/mmmmm", 'a')
+                    f.write("yaml")
+                    f.close()
+                except Exception,e:
+                    LOG.error(str(e))
+                return 0;
+
+            elif options['operation'] == 'REBUILD':
                 return self.do_rebuild(obj)
 
         res = super(ServerProfile, self).do_recover(
