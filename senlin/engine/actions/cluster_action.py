@@ -30,7 +30,6 @@ from senlin.engine import node as node_mod
 from senlin.engine import scheduler
 from senlin.engine import senlin_lock
 from senlin.policies import base as policy_mod
-from senlin.drivers import base as driver_base
 
 LOG = logging.getLogger(__name__)
 
@@ -62,7 +61,6 @@ class ClusterAction(base.Action):
         :param dict kwargs: Other optional arguments for the action.
         """
         super(ClusterAction, self).__init__(target, action, context, **kwargs)
-        self._mistralclient = None
 
         try:
             self.cluster = cluster_mod.Cluster.load(self.context, self.target)
@@ -506,30 +504,59 @@ class ClusterAction(base.Action):
 
         return res, reason
 
-    def mistral(self):
-            if self._mistralclient is not None:
-                return self._mistralclient
-            params = self._build_conn_params(self.user, self.project)
-            self._mistralclient = driver_base.SenlinDriver().workflow(params)
-            return self._mistralclient
-
-
     def do_recover(self):
         """Handler for the CLUSTER_RECOVER action.
 
         :returns: A tuple containing the result and the corresponding reason.
         """
-        reason = ""
-        kwargs = {
-            "definition": "hello.yaml"
-        }
-        try:
-            hello_workflow = self.mistral().workflow_create(**kwargs)
-            f = file("/opt/stack/mmmmm",'a')
-            f.write("yaml")
-            f.close()
-        except Exception,e:
-         LOG.error(str(e))
+        res = self.cluster.do_recover(self.context)
+        if not res:
+            reason = _('Cluster recovery failed.')
+            self.cluster.set_status(self.context, self.cluster.ERROR, reason)
+            return self.RES_ERROR, reason
+
+        # process data from health_policy
+        pd = self.data.get('health', None)
+        if pd is None:
+            pd = {
+                'health': {
+                    'recover_action': 'RECREATE',
+                }
+            }
+            self.data.update(pd)
+        recover_action = pd.get('recover_action', 'RECREATE')
+
+        reason = _('Cluster recovery succeeded.')
+
+        children = []
+        for node in self.cluster.nodes:
+            if node.status == 'ACTIVE':
+                continue
+            node_id = node.id
+            action_id = base.Action.create(
+                self.context, node_id, consts.NODE_RECOVER,
+                name='node_recover_%s' % node_id[:8],
+                cause=base.CAUSE_DERIVED,
+                inputs={'operation': recover_action}
+            )
+            children.append(action_id)
+
+        if children:
+            db_api.dependency_add(self.context, [c for c in children], self.id)
+            for cid in children:
+                db_api.action_update(self.context, cid, {'status': 'READY'})
+            dispatcher.start_action()
+
+            # Wait for dependent action if any
+            res, reason = self._wait_for_dependents()
+
+            if res != self.RES_OK:
+                self.cluster.set_status(self.context, self.cluster.ERROR,
+                                        reason)
+                return res, reason
+
+        self.cluster.set_status(self.context, self.cluster.ACTIVE, reason)
+
         return self.RES_OK, reason
 
     def do_resize(self):

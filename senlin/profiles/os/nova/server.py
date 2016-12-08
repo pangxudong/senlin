@@ -240,6 +240,7 @@ class ServerProfile(base.Profile):
 
         self._novaclient = None
         self._neutronclient = None
+        self._mistralclient = None
         self.server_id = None
 
     def nova(self, obj):
@@ -740,7 +741,25 @@ class ServerProfile(base.Profile):
 
         return True
 
+    def mistral(self):
+            if self._mistralclient is not None:
+                return self._mistralclient
+            params = self._build_conn_params(self.user, self.project)
+            self._mistralclient = driver_base.SenlinDriver().workflow(params)
+            return self._mistralclient
+
     def do_recover(self, obj, **options):
+
+        # kwargs = {
+        #     "definition": "hello.yaml"
+        # }
+        # try:
+        #     hello_workflow = self.mistral().workflow_create(**kwargs)
+        #     f = file("/opt/stack/mmmmm",'a')
+        #     f.write("yaml")
+        #     f.close()
+        # except Exception,e:
+        #  LOG.error(str(e))
 
         if 'operation' in options:
             if options['operation'] == 'REBUILD':
