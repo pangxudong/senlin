@@ -520,11 +520,11 @@ class ClusterAction(base.Action):
         if pd is None:
             pd = {
                 'health': {
-                    'recover_action': 'RECREATE',
+                    'recover_action': 'COLD_MIGRATION',
                 }
             }
             self.data.update(pd)
-        recover_action = pd.get('recover_action', 'RECREATE')
+        recover_action = pd.get('recover_action', 'COLD_MIGRATION')
 
         reason = _('Cluster recovery succeeded.')
 
