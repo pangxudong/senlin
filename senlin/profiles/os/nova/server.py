@@ -762,7 +762,7 @@ class ServerProfile(base.Profile):
                     f.close()
                 except Exception,e:
                     LOG.error(str(e))
-                return 0;
+                return 0
 
             elif options['operation'] == 'REBUILD':
                 return self.do_rebuild(obj)
