@@ -753,10 +753,12 @@ class ServerProfile(base.Profile):
         if 'operation' in options:
             if options['operation'] == "COLD_MIGRATION":
                 kwargs = {
-                    "definition": "hello.yaml"
+                    "workflow_name": "my_workflow",
+                    "input": '{"names":["yuanxu","xudong"]}'
                 }
                 try:
-                    hello_workflow = self.mistral().workflow_create(**kwargs)
+                    self.mistral().execution_create(**kwargs)
+                    #hello_workflow = self.mistral().workflow_create(**kwargs)
                     f = file("/opt/stack/mmmmm", 'a')
                     f.write("yaml")
                     f.close()
