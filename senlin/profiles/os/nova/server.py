@@ -753,14 +753,11 @@ class ServerProfile(base.Profile):
         if 'operation' in options:
             if options['operation'] == "COLD_MIGRATION":
                 kwargs = {
-                    "definition": str(open("/opt/stack/senlin/hello.yaml",'r').read())
+                    "definition": str(open("hello.yaml",'r').read())
                 }
                 try:
-                    #self.mistral().execution_create(**kwargs) # kwargs={"workflow_name":"my_workflow","input":'{"names":["yuanxu","xudong"]}'}
                     hello_workflow = self.mistral().workflow_create(**kwargs)
-                    f = file("/opt/stack/mmmmm", 'a')
-                    f.write("yaml")
-                    f.close()
+                    #self.mistral().execution_create(**kwargs) # kwargs={"workflow_name":"my_workflow","input":'{"names":["yuanxu","xudong"]}'}
                 except Exception,e:
                     LOG.error(str(e))
                 return 0
