@@ -31,11 +31,13 @@ class MistralClient(base.DriverBase):
         return self.conn.workflow.create_workflow(**attrs)
 
     @sdk.translate_exception
-    def workflow_delete(self, workflow, ignore_missing=True):
-        return self.conn.workflow.delete_workflow(workflow, ignore_missing)
+    def workflow_delete(self, workflow_name, ignore_missing=True):
+        attrs = [workflow_name]
+        return self.conn.workflow.delete_workflow(ignore_missing, *attrs)
 
     @sdk.translate_exception
-    def workflow_get(self, *attrs):
+    def workflow_get(self, workflow_name):
+        attrs= [workflow_name]
         return self.conn.workflow.get_workflow(*attrs)
 
     @sdk.translate_exception
@@ -47,10 +49,6 @@ class MistralClient(base.DriverBase):
         return self.conn.workflow.create_execution(**attrs)
 
     @sdk.translate_exception
-    def execution_delete(self, workflow_name, execution,
-                            ignore_missing=True):
-        return self.conn.workflow.delete_execution(workflow_name, execution,
-                                                     ignore_missing)
-    @sdk.translate_exception
-    def execution_get(self, *attrs):
+    def execution_get(self, execution):
+        attrs = [execution]
         return self.conn.workflow.get_execution(*attrs)
