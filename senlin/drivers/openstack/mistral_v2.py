@@ -23,7 +23,11 @@ class MistralClient(base.DriverBase):
         self.session = self.conn.session
 
     @sdk.translate_exception
-    def workflow_create(self, **attrs):
+    def workflow_create(self, definition, scope):
+        attrs = {
+            'definition':definition,
+            'scope':scope
+        }
         return self.conn.workflow.create_workflow(**attrs)
 
     @sdk.translate_exception
@@ -35,8 +39,12 @@ class MistralClient(base.DriverBase):
         return self.conn.workflow.get_workflow(*attrs)
 
     @sdk.translate_exception
-    def execution_create(self, workflow_name, **attrs):
-        return self.conn.workflow.create_execution(workflow_name, **attrs)
+    def execution_create(self, workflow_name, input):
+        attrs = {
+            'workflow_name':workflow_name,
+            'input':input
+        }
+        return self.conn.workflow.create_execution(**attrs)
 
     @sdk.translate_exception
     def execution_delete(self, workflow_name, execution,
