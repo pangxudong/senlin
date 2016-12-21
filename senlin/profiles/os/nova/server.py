@@ -752,14 +752,15 @@ class ServerProfile(base.Profile):
 
         if 'operation' in options:
             if options['operation'] == "COLD_MIGRATION":
-                definition= str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/live_migration/cluster-livemigration.yaml",'r').read())
-                input = {"names":["yuanxu","xudong"]}'
-                workflow_name="my_workflow"
                 try:
-                    kwargs = {"definition":definition}
-                    self.mistral().workflow_create(**kwargs)
-                    kwargs = {"workflow_name":workflow_name, "input":input}
-                    self.mistral().execution_create(**kwargs)
+                    #definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml",'r').read())
+                    definition = str(open("/opt/stack/senlin/senlin/profiles/os/nova/hello.yaml",'r').read())
+                    input = '{"names":["yuanxu","xudong"]}'
+                    workflow_name = "my_workflow"
+                    #hello_workflow = self.mistral().workflow_create(definition,scope="private")
+                    #self.mistral().execution_create(workflow_name, input)
+                    self.mistral().workflow_get(workflow_name)
+                    #resp = self.mistral().execution_get(id, *attrs)
                 except Exception,e:
                     LOG.error(str(e))
                 return 0
