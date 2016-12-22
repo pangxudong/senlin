@@ -7,6 +7,7 @@ cluster-coldmigration:
 
     input:
         - cluster_id
+        - node_id
         - flavor_id
 
     tasks:
@@ -18,7 +19,7 @@ cluster-coldmigration:
 
         filter_vms:
             with-items: vm in <% $.vms %>
-            action: custom.filter_vm flavor=<% $.vm.flavor.id %> metadata=<% $.vm.metadata %> uuid=<% $.vm.id %> cluster_id=<% $.cluster_id %>
+            action: custom.filter_vm flavor=<% $.vm.flavor.id %> metadata=<% $.vm.metadata %> uuid=<% $.vm.id %> cluster_id=<% $.cluster_id %> node_id=<% $.node_id %>
             publish:
                 filtered_vms: <% $.filter_vms %>
             on-success: cold_migrate_vms
@@ -44,7 +45,7 @@ cluster-coldmigration:
                 count: 15
 
         confirm_resize_vms:
-            description: confirm resize
+            description: confirm resize, remember to disable auto confirm in nova.conf(comment resize_confirm_windows)
             with-items: vm in <% $.filtered_vms %>
             action: custom.confirm_resize  uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %>
 #            on-success: validate_migrate_vms

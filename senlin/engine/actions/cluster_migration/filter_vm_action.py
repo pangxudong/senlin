@@ -18,12 +18,13 @@ class FilterVmAction(NovaAction):
     or flavor extra spec.
     """
 
-    def __init__(self, metadata, flavor, uuid, cluster_id):
+    def __init__(self, metadata, flavor, uuid, cluster_id, node_id):
         """init."""
         self._metadata = metadata
         self._flavor = flavor
         self._uuid = uuid
         self._cluster_id = cluster_id
+        self._node_id = node_id
 
     def run(self):
         """Entry point for the action execution."""
@@ -31,7 +32,8 @@ class FilterVmAction(NovaAction):
         metadata = self._metadata
 
         if str(metadata.get('cluster')) == str(self._cluster_id):
-            return Result(data={'migrate': True, 'uuid': self._uuid})
+            if str(self._uuid) == str(self._node_id):
+                return Result(data={'migrate': True, 'uuid': self._uuid})
 
         # Ether is no metadata for vm - check flavor.
         try:
