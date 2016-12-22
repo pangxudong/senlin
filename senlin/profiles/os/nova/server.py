@@ -753,14 +753,12 @@ class ServerProfile(base.Profile):
         if 'operation' in options:
             if options['operation'] == "COLD_MIGRATION":
                 try:
-                    #definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml",'r').read())
-                    definition = str(open("/opt/stack/senlin/senlin/profiles/os/nova/hello.yaml",'r').read())
-                    input = '{"names":["yuanxu","xudong"]}'
-                    workflow_name = "my_workflow"
-                    #hello_workflow = self.mistral().workflow_create(definition,scope="private")
-                    #self.mistral().execution_create(workflow_name, input)
-                    self.mistral().workflow_get(workflow_name)
-                    #resp = self.mistral().execution_get(id, *attrs)
+                    workflow_name = "cluster-coldmigration"
+                    if (self.mistral().workflow_get(workflow_name) == None):
+                        definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml",'r').read())
+                        self.mistral().workflow_create(definition,scope="private")
+                    input = '{"cluster_id" : obj.cluster_id, "node_id" : obj.id, "flavor": "1"}' # flavor: new flavor to resize-migrate
+                    resp = self.mistral().execution_create(workflow_name, input)
                 except Exception,e:
                     LOG.error(str(e))
                 return 0
