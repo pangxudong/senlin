@@ -7,6 +7,7 @@ cluster-livemigration:
 
     input:
         - cluster_id
+        - node_id
         - host
         - block_migration
         - disk_over_commit
@@ -20,7 +21,7 @@ cluster-livemigration:
 
         filter_vms:
             with-items: vm in <% $.vms %>
-            action: custom.filter_vm flavor=<% $.vm.flavor.id %> metadata=<% $.vm.metadata %> uuid=<% $.vm.id %> cluster_id=<% $.cluster_id %>
+            action: custom.filter_vm flavor=<% $.vm.flavor.id %> metadata=<% $.vm.metadata %> uuid=<% $.vm.id %> cluster_id=<% $.cluster_id %> node_id=<% $.node_id %>
             publish:
                 filtered_vms: <% $.filter_vms %>
             on-success: validate_host
