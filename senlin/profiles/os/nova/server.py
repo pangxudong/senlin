@@ -754,7 +754,7 @@ class ServerProfile(base.Profile):
             if options['operation'] == "COLD_MIGRATION":
                 try:
                     workflow_name = "cluster-coldmigration"
-                    if (self.mistral().workflow_get(workflow_name) == None):
+                    if (self.mistral().workflow_find(workflow_name) == None):
                         definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml",'r').read())
                         self.mistral().workflow_create(definition,scope="private")
                     input = '{"cluster_id" : obj.cluster_id, "node_id" : obj.id, "flavor": "1"}' # flavor: target_flavor of resize-migrate

@@ -41,6 +41,10 @@ class MistralClient(base.DriverBase):
         return self.conn.workflow.get_workflow(*attrs)
 
     @sdk.translate_exception
+    def workflow_find(self, name_or_id):
+        return self.conn.workflow.find_workflow(name_or_id, ignore_missing=True)
+
+    @sdk.translate_exception
     def execution_create(self, workflow_name, input):
         attrs = {
             'workflow_name':workflow_name,
