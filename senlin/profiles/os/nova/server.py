@@ -757,11 +757,12 @@ class ServerProfile(base.Profile):
                     if (str(self.mistral().workflow_find(workflow_name)) == None):
                         definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml",'r').read())
                         self.mistral().workflow_create(definition,scope="private")
-                    input = '{"cluster_id" : "%s", "node_id" : "%s", "flavor_id": "1"}'  % (obj.cluster_id, obj.id)# flavor: target_flavor of resize-migrate
+                    input = '{"cluster_id" : "%s", "node_id" : "%s", "flavor_id": "1"}'  % (obj.cluster_id, obj.physical_id)# flavor: target_flavor of resize-migrate
                     resp = self.mistral().execution_create(workflow_name, input)
                 except Exception,e:
                     LOG.error(str(e))
-                return 0
+                    return False
+                return True
 
             elif options['operation'] == 'REBUILD':
                 return self.do_rebuild(obj)
