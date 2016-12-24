@@ -760,6 +760,25 @@ class ServerProfile(base.Profile):
 
         return True
 
+    def do_live_migration(self, obj):
+        if not obj.physical_id:
+            return False
+
+        self.server_id = obj.physical_id
+
+        try:
+            workflow_name = "cluster-livemigration"
+            if (str(self.mistral().workflow_find(workflow_name)) == None):
+                definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/live_migration/cluster-livemigration.yaml",'r').read())
+                self.mistral().workflow_create(definition,scope="private")
+            input = '{"cluster_id" : "%s", "node_id" : "%s", "host": "ubuntu2", "block_migration": "False", "disk_over_commit": "False"}'  % (obj.cluster_id, obj.physical_id)
+            self.mistral().execution_create(workflow_name, input)
+        except Exception,e:
+            LOG.error(str(e))
+            return False
+
+        return True
+
     def mistral(self):
             if self._mistralclient is not None:
                 return self._mistralclient
@@ -772,6 +791,9 @@ class ServerProfile(base.Profile):
         if 'operation' in options:
             if options['operation'] == "COLD_MIGRATION":
                 return self.do_cold_migration(obj)
+
+            elif options['operation'] == 'LIVE_MIGRATION':
+                return self.do_live_migration(obj)
 
             elif options['operation'] == 'REBUILD':
                 return self.do_rebuild(obj)
