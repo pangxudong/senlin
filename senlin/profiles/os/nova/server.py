@@ -12,6 +12,7 @@
 
 import base64
 import copy
+import json
 
 from oslo_log import log as logging
 from oslo_utils import encodeutils
@@ -741,41 +742,32 @@ class ServerProfile(base.Profile):
 
         return True
 
-    def do_cold_migration(self, obj):
+    def do_workflow(self, obj, **options):
         if not obj.physical_id:
             return False
 
         self.server_id = obj.physical_id
+        workflow_name = options.get('workflow_name', None)
+        def_path = options.get('definition', None)
+        input_dict = options.get('input', None)
+        cluster_dict = {
+            'cluster_id': obj.cluster_id,
+            'node_id': obj.physical_id,
+        }
+        cluster_dict.update(input_dict)
 
         try:
-            workflow_name = "cluster-coldmigration"
-            if (self.mistral().workflow_find(workflow_name) is None):
-                definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml",'r').read())
-                self.mistral().workflow_create(definition,scope="private")
-            input = '{"cluster_id" : "%s", "node_id" : "%s", "flavor_id": "1"}'  % (obj.cluster_id, obj.physical_id)# flavor: target_flavor of resize-migrate
-            self.mistral().execution_create(workflow_name, input)
-        except Exception,e:
-            LOG.error(str(e))
-            return False
+            workflow = self.mistral().workflow_find(workflow_name)
+            if workflow is None:
+                definition = open(def_path, 'r').read()
+                self.mistral().workflow_create(definition, scope="private")
 
-        return True
+            input_str = json.dumps(cluster_dict)
 
-    def do_live_migration(self, obj):
-        if not obj.physical_id:
-            return False
-
-        self.server_id = obj.physical_id
-
-        try:
-            workflow_name = "cluster-livemigration"
-            if (self.mistral().workflow_find(workflow_name) is None):
-                definition = str(open("/opt/stack/senlin/senlin/engine/actions/cluster_migration/live_migration/cluster-livemigration.yaml",'r').read())
-                self.mistral().workflow_create(definition,scope="private")
-            input = '{"cluster_id" : "%s", "node_id" : "%s", "host": "ubuntu2", "block_migration": "False", "disk_over_commit": "False"}'  % (obj.cluster_id, obj.physical_id)
-            self.mistral().execution_create(workflow_name, input)
-        except Exception,e:
-            LOG.error(str(e))
-            return False
+            self.mistral().execution_create(workflow_name, input_str)
+        except exception.InternalError as ex:
+            raise exception.EResourceUpdate(type='server', id=obj.physical_id,
+                                      message=six.text_type(ex))
 
         return True
 
@@ -787,18 +779,16 @@ class ServerProfile(base.Profile):
             return self._mistralclient
 
     def do_recover(self, obj, **options):
+        # NOTE: We do a 'get' not a 'pop' here, because the operations may
+        #       get fall back to the base class for handling
+        operation = options.get('operation', None)
 
-        if 'operation' in options:
-            if options['operation'] == "COLD_MIGRATION":
-                return self.do_cold_migration(obj)
-
-            elif options['operation'] == 'LIVE_MIGRATION':
-                return self.do_live_migration(obj)
-
-            elif options['operation'] == 'REBUILD':
-                return self.do_rebuild(obj)
-
-        res = super(ServerProfile, self).do_recover(
-            obj, **options)
-
-        return res
+        if operation and not isinstance(operation, six.string_types):
+            operation = operation[0]
+        # TODO(Qiming): Handle the case that the operation contains other
+        #               alternative recover operation
+        # Depends-On: https://review.openstack.org/#/c/359676/
+        if operation == 'REBUILD':
+            return self.do_rebuild(obj)
+        elif operation == 'WORKFLOW':
+            return self.do_workflow(obj, **options)
