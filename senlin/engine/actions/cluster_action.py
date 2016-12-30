@@ -537,14 +537,7 @@ class ClusterAction(base.Action):
                 self.context, node_id, consts.NODE_RECOVER,
                 name='node_recover_%s' % node_id[:8],
                 cause=base.CAUSE_DERIVED,
-                inputs={
-                'operation': recover_action,
-                'workflow_name':'cluster-coldmigration',
-                'definition':'/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml'},
-                'input':{'flavor_id':1}
-                # 'input':{'host':'ubuntu2','block_migration':False,'disk_over_commit':False},
-                # 'workflow_name':'cluster-livemigration',
-                # 'definition':'/opt/stack/senlin/senlin/engine/actions/cluster_migration/live_migration/cluster-livemigration.yaml'}
+                inputs={'operation': recover_action}
             )
             children.append(action_id)
 

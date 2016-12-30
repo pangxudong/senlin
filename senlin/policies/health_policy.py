@@ -9,13 +9,17 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
+import json
+import six
 
+from senlin.common import exception
 from senlin.common import constraints
 from senlin.common import consts
 from senlin.common.i18n import _
 from senlin.common import schema
 from senlin.engine import health_manager
 from senlin.policies import base
+from senlin.drivers import base as driver_base
 
 
 class HealthPolicy(base.Policy):
@@ -51,9 +55,9 @@ class HealthPolicy(base.Policy):
     )
 
     _DETECTION_OPTIONS = (
-        DETECTION_INTERVAL,
+        DETECTION_INTERVAL, WORKFLOW_NAME, DEFINITION, INPUT,
     ) = (
-        'interval',
+        'interval', 'workflow_name', 'definition', 'input',
     )
 
     _RECOVERY_KEYS = (
@@ -63,9 +67,9 @@ class HealthPolicy(base.Policy):
     )
 
     RECOVERY_ACTION_VALUES = (
-        REBOOT, REBUILD, MIGRATE, EVACUATE, RECREATE, NOP
+        REBOOT, REBUILD, MIGRATE, EVACUATE, RECREATE, WORKFLOW, NOP
     ) = (
-        'REBOOT', 'REBUILD', 'MIGRATE', 'EVACUATE', 'RECREATE', 'NOP',
+        'REBOOT', 'REBUILD', 'MIGRATE', 'EVACUATE', 'RECREATE', 'WORKFLOW', 'NOP',
     )
 
     FENCING_OPTION_VALUES = (
@@ -130,6 +134,43 @@ class HealthPolicy(base.Policy):
         self.interval = options[self.DETECTION_INTERVAL]
         recover_settings = self.properties[self.RECOVERY]
         self.recover_actions = recover_settings[self.RECOVERY_ACTIONS]
+        self._mistralclient = None
+
+    def do_workflow(self, obj, **options):
+        if not obj.physical_id:
+            return False
+
+        self.server_id = obj.physical_id
+        workflow_name = options.get('workflow_name', None)
+        def_path = options.get('definition', None)
+        input_dict = options.get('input', None)
+        cluster_dict = {
+            'cluster_id': obj.cluster_id,
+            'node_id': obj.physical_id,
+        }
+        cluster_dict.update(input_dict)
+
+        try:
+            workflow = self.mistral().workflow_find(workflow_name)
+            if workflow is None:
+                definition = open(def_path, 'r').read()
+                self.mistral().workflow_create(definition, scope="private")
+
+            input_str = json.dumps(cluster_dict)
+
+            self.mistral().execution_create(workflow_name, input_str)
+        except exception.InternalError as ex:
+            raise exception.EResourceUpdate(type='server', id=obj.physical_id,
+                                      message=six.text_type(ex))
+
+        return True
+
+    def mistral(self):
+            if self._mistralclient is not None:
+                return self._mistralclient
+            params = self._build_conn_params(self.user, self.project)
+            self._mistralclient = driver_base.SenlinDriver().workflow(params)
+            return self._mistralclient
 
     def attach(self, cluster):
         """"Hook for policy attach.
@@ -142,6 +183,10 @@ class HealthPolicy(base.Policy):
             'interval': self.interval,
             'params': {},
         }
+        for node in cluster.nodes:
+            if node.status == 'ACTIVE':
+                continue
+            do_workflow(node)
 
         health_manager.register(cluster.id, engine_id=None, **kwargs)
 
