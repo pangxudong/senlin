@@ -241,7 +241,7 @@ class ServerProfile(base.Profile):
 
         self._novaclient = None
         self._neutronclient = None
-        self._mistralclient = None
+        self._workflowclient = None
         self.server_id = None
 
     def nova(self, obj):
@@ -757,26 +757,26 @@ class ServerProfile(base.Profile):
         cluster_dict.update(input_dict)
 
         try:
-            workflow = self.mistral().workflow_find(workflow_name)
+            workflow = self.workflow().workflow_find(workflow_name)
             if workflow is None:
                 definition = open(def_path, 'r').read()
-                self.mistral().workflow_create(definition, scope="private")
+                self.workflow().workflow_create(definition, scope="private")
 
             input_str = json.dumps(cluster_dict)
 
-            self.mistral().execution_create(workflow_name, input_str)
+            self.workflow().execution_create(workflow_name, input_str)
         except exception.InternalError as ex:
             raise exception.EResourceUpdate(type='server', id=obj.physical_id,
                                       message=six.text_type(ex))
 
         return True
 
-    def mistral(self):
-            if self._mistralclient is not None:
-                return self._mistralclient
+    def workflow(self):
+            if self._workflowclient is not None:
+                return self._workflowclient
             params = self._build_conn_params(self.user, self.project)
-            self._mistralclient = driver_base.SenlinDriver().workflow(params)
-            return self._mistralclient
+            self._workflowclient = driver_base.SenlinDriver().workflow(params)
+            return self._workflowclient
 
     def do_recover(self, obj, **options):
         # NOTE: We do a 'get' not a 'pop' here, because the operations may
