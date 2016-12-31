@@ -11,25 +11,15 @@ properties:
     options:
       # Number of seconds between two adjacent checking
       interval: 60
-      workflow_name: "cluster-coldmigration"
-      definition: "/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster-coldmigration.yaml"
-      input: {'flavor_id':1}
-      # workflow_name: "cluster-livemigration"
-      # definition: "/opt/stack/senlin/senlin/engine/actions/cluster_migration/live_migration/cluster-livemigration.yaml"
-      # input: {'host':'ubuntu2','disk_over_commit':False,'block_migration':False}
 
   recovery:
     # List of actions that can be retried on a failed node
     actions:
-      - REBOOT
-      - REBUILD
-      - MIGRATE
-      - EVACUATE
-      - RECREATE
-      - WORKFLOW
+      - name: cluster_coldmigration
+        type: WORKFLOW
+        params:
+          flavor: 1
 
     # List of services that are to be fenced
     fencing:
       - COMPUTE
-      - STORAGE
-      - NETWORK
