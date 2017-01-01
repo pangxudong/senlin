@@ -524,7 +524,7 @@ class ClusterAction(base.Action):
                 }
             }
             self.data.update(pd)
-        recover_action = pd.get('recover_action', None)
+        recover_action = pd.get('recover_action', 'WORKFLOW')
 
         reason = _('Cluster recovery succeeded.')
 
