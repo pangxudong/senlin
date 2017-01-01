@@ -768,7 +768,7 @@ class ServerProfile(base.Profile):
             raise exception.EResourceUpdate(type='server', id=obj.physical_id,
                                       message=six.text_type(ex))
 
-        return True
+        return self.server_id
 
     def workflow(self):
             if self._workflowclient is not None:
