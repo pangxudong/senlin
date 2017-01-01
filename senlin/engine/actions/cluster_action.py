@@ -537,7 +537,11 @@ class ClusterAction(base.Action):
                 self.context, node_id, consts.NODE_RECOVER,
                 name='node_recover_%s' % node_id[:8],
                 cause=base.CAUSE_DERIVED,
-                inputs={'operation': recover_action,'workflow_name':'cluster-coldmigration','input':{'flavor_id':1},'definition':'/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster_coldmigration.yaml'}
+                inputs={
+                    'operation': recover_action['name'],
+                    'type':recover_action['type'],
+                    'params': recover_action['params']
+                }
             )
             children.append(action_id)
 

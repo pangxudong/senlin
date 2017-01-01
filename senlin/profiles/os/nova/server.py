@@ -742,19 +742,18 @@ class ServerProfile(base.Profile):
 
         return True
 
-    def do_workflow(self, obj, **options):
+    def do_workflow(self, obj, workflow_name, **params):
         if not obj.physical_id:
             return False
 
         self.server_id = obj.physical_id
-        workflow_name = options.get('workflow_name', None)
-        def_path = options.get('definition', None)
-        input_dict = options.get('input', None)
-        cluster_dict = {
+        wfc = self.workflow()
+        def_path = params.pop('definition')
+        input_dict = {
             'cluster_id': obj.cluster_id,
             'node_id': obj.physical_id,
         }
-        cluster_dict.update(input_dict)
+        input_dict.update(params)
 
         try:
             workflow = self.workflow().workflow_find(workflow_name)
@@ -762,7 +761,7 @@ class ServerProfile(base.Profile):
                 definition = open(def_path, 'r').read()
                 self.workflow().workflow_create(definition, scope="private")
 
-            input_str = json.dumps(cluster_dict)
+            input_str = json.dumps(input_dict)
 
             self.workflow().execution_create(workflow_name, input_str)
         except exception.InternalError as ex:
@@ -782,6 +781,8 @@ class ServerProfile(base.Profile):
         # NOTE: We do a 'get' not a 'pop' here, because the operations may
         #       get fall back to the base class for handling
         operation = options.get('operation', None)
+        operation_type = options.get('type', None)
+        operaiton_params = options.get('params', None)
 
         if operation and not isinstance(operation, six.string_types):
             operation = operation[0]
@@ -790,5 +791,5 @@ class ServerProfile(base.Profile):
         # Depends-On: https://review.openstack.org/#/c/359676/
         if operation == 'REBUILD':
             return self.do_rebuild(obj)
-        elif operation == 'WORKFLOW':
-            return self.do_workflow(obj, **options)
+        elif operation_type == 'WORKFLOW':
+            return self.do_workflow(obj, operation, **operaiton_params)
