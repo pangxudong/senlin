@@ -1,0 +1,61 @@
+---
+version: '2.0'
+
+cluster-coldmigration:
+    description: resize vms from given cluster
+    type: direct
+
+    input:
+        - cluster_id
+        - node_id
+        - flavor_id
+
+    tasks:
+        list_vms:
+            action: nova.servers_list
+            publish:
+                vms: <% $.list_vms %>
+            on-success: filter_vms
+
+        filter_vms:
+            with-items: vm in <% $.vms %>
+            action: custom.filter_vm flavor=<% $.vm.flavor.id %> metadata=<% $.vm.metadata %> uuid=<% $.vm.id %> cluster_id=<% $.cluster_id %> node_id=<% $.node_id %>
+            publish:
+                filtered_vms: <% $.filter_vms %>
+            on-success: cold_migrate_vms
+            retry:
+                delay: 5
+                count: 3
+
+        cold_migrate_vms:
+            with-items: vm in <% $.filtered_vms %>
+            action: custom.cold_migrate uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %> flavor_id=<% $.flavor_id %>
+            on-success: wait_vms
+            retry:
+                delay: 5
+                count: 3
+
+        wait_vms:
+            description: wait to confirm resizing vms
+            with-items: vm in <% $.filtered_vms %>
+            action: custom.wait_vm uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %>
+            on-success: confirm_resize_vms
+            retry:
+                delay: 15
+                count: 200
+
+        confirm_resize_vms:
+            description: confirm resize, remember to disable auto confirm in nova.conf(comment resize_confirm_windows)
+            with-items: vm in <% $.filtered_vms %>
+            action: custom.confirm_resize  uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %>
+#            on-success: validate_migrate_vms
+            retry:
+                delay: 5
+                count: 3
+
+#        confirm_and_validate_vms:
+#            with-items: vm in <% $.filtered_vms %>
+#            action: custom.confirm_and_validate_vm migrate=<% $.vm.migrate %> uuid=<% $.vm.uuid %> flavor_id=<% $.flavor_id %>
+#            retry:
+#                delay: 5
+#                count: 3
