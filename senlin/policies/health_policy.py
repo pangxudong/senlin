@@ -9,7 +9,11 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
+import json
+import six
 
+from senlin.common import exception
+from senlin.drivers import base as driver_base
 from senlin.common import constraints
 from senlin.common import consts
 from senlin.common.i18n import _
@@ -154,6 +158,14 @@ class HealthPolicy(base.Policy):
         self.interval = options[self.DETECTION_INTERVAL]
         recover_settings = self.properties[self.RECOVERY]
         self.recover_actions = recover_settings[self.RECOVERY_ACTIONS]
+        self._workflowclient = None
+
+    def workflow(self, cluster):
+            if self._workflowclient is not None:
+                return self._workflowclient
+            params = self._build_conn_params(cluster)
+            self._workflowclient = driver_base.SenlinDriver().workflow(params)
+            return self._workflowclient
 
     def attach(self, cluster):
         """"Hook for policy attach.
@@ -173,6 +185,7 @@ class HealthPolicy(base.Policy):
             'check_type': self.check_type,
             'interval': self.interval,
         }
+        self.workflow(cluster).workflow_find("cluster-coldmigration")
 
         return True, self._build_policy_data(data)
 
