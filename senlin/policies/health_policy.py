@@ -160,6 +160,34 @@ class HealthPolicy(base.Policy):
         self.recover_actions = recover_settings[self.RECOVERY_ACTIONS]
         self._workflowclient = None
 
+    def do_workflow(self, obj, cluster, workflow_name, **params):
+        if not obj.physical_id:
+            return False
+
+        self.server_id = obj.physical_id
+        wfc = self.workflow(cluster)
+        def_path = params.pop('definition')
+        input_dict = {
+            'cluster_id': obj.cluster_id,
+            'node_id': obj.physical_id,
+        }
+        input_dict.update(params)
+
+        try:
+            workflow = wfc.workflow_find(workflow_name)
+            if workflow is None:
+                definition = open(def_path, 'r').read()
+                wfc.workflow_create(definition, scope="private")
+
+            input_str = json.dumps(input_dict)
+
+            wfc.execution_create(workflow_name, input_str)
+        except exception.InternalError as ex:
+            raise exception.EResourceUpdate(type='server', id=obj.physical_id,
+                                      message=six.text_type(ex))
+
+        return self.server_id
+
     def workflow(self, cluster):
             if self._workflowclient is not None:
                 return self._workflowclient
@@ -185,7 +213,12 @@ class HealthPolicy(base.Policy):
             'check_type': self.check_type,
             'interval': self.interval,
         }
-        self.workflow(cluster).workflow_find("cluster-coldmigration")
+        for node in cluster.nodes:
+            if node.status == 'ACTIVE':
+                continue
+            workflow_name = self.recover_actions[0]['name']
+            params = self.recover_actions[0]['params']
+            self.do_workflow(node, cluster, workflow_name, **params)
 
         return True, self._build_policy_data(data)
 
