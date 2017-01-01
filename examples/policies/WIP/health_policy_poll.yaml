@@ -26,7 +26,7 @@ properties:
       #     host: ubuntu2
       #     disk_over_commit: False
       #     block_migration: False
-      #     definition: '/opt/stack/senlin/senlin/engine/actions/cluster_migration/live_migration/cluster_livemigration.yaml'
+      #     definition: '/opt/stack/senlin/examples/workflow/cluster_migration/live_migration/cluster-livemigration.yaml'
 
     # List of services that are to be fenced
     fencing:
