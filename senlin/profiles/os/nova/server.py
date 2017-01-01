@@ -12,10 +12,10 @@
 
 import base64
 import copy
-import json
 
 from oslo_log import log as logging
 from oslo_utils import encodeutils
+from oslo_serialization import jsonutils
 import six
 
 from senlin.common import exception
@@ -761,7 +761,7 @@ class ServerProfile(base.Profile):
                 definition = open(def_path, 'r').read()
                 wfc.workflow_create(definition, scope="private")
 
-            input_str = json.dumps(input_dict)
+            input_str = jsonutils.dumps(input_dict)
 
             wfc.execution_create(workflow_name, input_str)
         except exception.InternalError as ex:

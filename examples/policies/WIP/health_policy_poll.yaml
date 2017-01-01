@@ -19,7 +19,7 @@ properties:
         type: WORKFLOW
         params:
           flavor_id: 1
-          definition: '/opt/stack/senlin/senlin/engine/actions/cluster_migration/cold_migration/cluster_coldmigration.yaml'
+          definition: '/opt/stack/senlin/examples/workflow/cluster_migration/cold_migration/cluster_coldmigration.yaml'
       # - name: cluster-livemigration
       #   type: WORKFLOW
       #   params:
