@@ -756,14 +756,14 @@ class ServerProfile(base.Profile):
         input_dict.update(params)
 
         try:
-            workflow = self.workflow().workflow_find(workflow_name)
+            workflow = wfc.workflow_find(workflow_name)
             if workflow is None:
                 definition = open(def_path, 'r').read()
-                self.workflow().workflow_create(definition, scope="private")
+                wfc.workflow_create(definition, scope="private")
 
             input_str = json.dumps(input_dict)
 
-            self.workflow().execution_create(workflow_name, input_str)
+            wfc.execution_create(workflow_name, input_str)
         except exception.InternalError as ex:
             raise exception.EResourceUpdate(type='server', id=obj.physical_id,
                                       message=six.text_type(ex))
