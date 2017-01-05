@@ -11,4 +11,4 @@ class ValidateFlavorAction(NovaAction):
         client = self._get_client()
 
         if self._migrate:
-            client.servers.findall(self._flavor_id)
+            client.servers.find(id=self._uuid, flavor=self._flavor_id)
