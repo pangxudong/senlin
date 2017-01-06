@@ -48,7 +48,7 @@ cluster-coldmigration:
             description: confirm resize, remember to disable auto confirm in nova.conf(comment resize_confirm_windows)
             with-items: vm in <% $.filtered_vms %>
             action: custom.confirm_resize  uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %>
-#            on-success: validate_flavor
+            on-success: validate_flavor
             retry:
                 delay: 5
                 count: 3
