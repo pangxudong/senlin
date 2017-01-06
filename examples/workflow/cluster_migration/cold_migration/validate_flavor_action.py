@@ -3,9 +3,10 @@ from mistral.workflow.utils import Result
 
 class ValidateFlavorAction(NovaAction):
 
-    def __init__(self, migrate, flavor_id):
+    def __init__(self, migrate, uuid, flavor_id):
         self._flavor_id = flavor_id
         self._migrate = migrate
+        self._uuid= uuid
 
     def run(self):
         client = self._get_client()
