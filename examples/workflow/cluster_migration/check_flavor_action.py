@@ -4,9 +4,10 @@ from mistral.actions.openstack.actions import NovaAction
 
 class CheckFlavorAction(NovaAction):
 
-    def __init__(self, tenant_id, flavor_id):
+    def __init__(self, migrate, tenant_id, flavor_id):
         self._flavor_id = flavor_id
         self._tenant_id= tenant_id
+        self._migrate= migrate
 
     def run(self):
         client = self._get_client()
