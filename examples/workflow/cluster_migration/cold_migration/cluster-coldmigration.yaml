@@ -9,6 +9,8 @@ cluster-coldmigration:
         - cluster_id
         - node_id
         - flavor_id
+    output:
+        vm_id: <% $.vm_id %>
 
     tasks:
         list_vms:
@@ -56,6 +58,8 @@ cluster-coldmigration:
         validate_flavor:
            with-items: vm in <% $.filtered_vms %>
            action: custom.validate_flavor migrate=<% $.vm.migrate %> uuid=<% $.vm.uuid %> flavor_id=<% $.flavor_id %>
+           publish:
+                vm_id: <% task(validate_flavor).result %>
            retry:
                delay: 5
                count: 3

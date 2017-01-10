@@ -1,5 +1,6 @@
 import sys
 from mistral.actions.openstack.actions import NovaAction
+from mistral.workflow.utils import Result
 
 
 class ValidateFlavorAction(NovaAction):
@@ -16,3 +17,4 @@ class ValidateFlavorAction(NovaAction):
             server = client.servers.find(id=self._uuid)
             if (server.flavor['id'] != str(self._flavor_id)):
                 sys.exit("flavor not correct!")
+            return Result(data={'uuid': self._uuid})
