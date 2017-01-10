@@ -11,6 +11,8 @@ cluster-livemigration:
         - host
         - block_migration
         - disk_over_commit
+    output:
+        vm_id: <% $.vm_id %>
 
     tasks:
         list_vms:
@@ -31,7 +33,7 @@ cluster-livemigration:
 
         validate_host:
            with-items: vm in <% $.filtered_vms %>
-           action: custom.validate_host host=<% $.host %> uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %> 
+           action: custom.validate_host host=<% $.host %> uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %>
            publish:
                validated_vms: <% $.validate_host %>
            on-success: live_migrate_vms
@@ -42,6 +44,16 @@ cluster-livemigration:
         live_migrate_vms:
             with-items: vm in <% $.validated_vms %>
             action: custom.live_migrate uuid=<% $.vm.uuid %> migrate=<% $.vm.migrate %> live_migrate=<% $.vm.live_migrate %> host=<% $.host %> block_migration=<% $.block_migration %> disk_over_commit=<% $.disk_over_commit %>
+            on-success: publish_vm_id
             retry:
                 delay: 5
                 count: 10
+
+        publish_vm_id:
+            with-items: vm in <% $.validated_vms %>
+            action: custom.publish_vm_id migrate=<% $.vm.migrate %> uuid=<% $.vm.uuid %>
+            publish:
+                vm_id: <% task(publish_vm_id).result %>
+            retry:
+                delay: 5
+                count: 3
