@@ -14,6 +14,6 @@ class CheckFlavorAction(NovaAction):
 
         if self._migrate:
             flavor_dict = client.flavors.find(id=self._flavor_id).to_dict()
-            limits_dict = client.limits.get().absolute
+            limits_dict = client.limits.get().to_dict()
             # if (server.flavor['id'] != str(self._flavor_id)):
             #     sys.exit("flavor not correct!")
