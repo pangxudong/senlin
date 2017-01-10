@@ -2,7 +2,7 @@ import sys
 from mistral.actions.openstack.actions import NovaAction
 
 
-class CheckFlavorAction(NovaAction):
+class CheckFlavorNovaAction(NovaAction):
 
     def __init__(self, migrate, tenant_id, flavor_id):
         self._flavor_id = flavor_id
