@@ -49,3 +49,7 @@ class MistralClient(base.DriverBase):
     @sdk.translate_exception
     def execution_delete(self, value, ignore_missing=True):
         return self.conn.workflow.delete_execution(value, ignore_missing=ignore_missing)
+
+    @sdk.translate_exception
+    def execution_find(self, name_or_id):
+        return self.conn.workflow.find_execution(name_or_id, ignore_missing=True)
