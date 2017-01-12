@@ -2,7 +2,7 @@ from mistral.actions.openstack.actions import NovaAction
 from mistral.workflow.utils import Result
 
 
-class ValidateFlavorAction(NovaAction):
+class PublishVmIdAction(NovaAction):
 
     def __init__(self, migrate, uuid):
         self._migrate = migrate
