@@ -763,7 +763,8 @@ class ServerProfile(base.Profile):
 
             input_str = jsonutils.dumps(input_dict)
 
-            wfc.execution_create(workflow_name, input_str)
+            execution = wfc.execution_create(workflow_name, input_str)
+            #wait_for_execution(execution.id)
         except exception.InternalError as ex:
             raise exception.EResourceUpdate(type='server', id=obj.physical_id,
                                       message=six.text_type(ex))
