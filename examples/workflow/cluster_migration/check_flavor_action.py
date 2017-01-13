@@ -15,5 +15,10 @@ class CheckFlavorAction(NovaAction):
         if self._migrate:
             flavor_dict = client.flavors.find(id=str(self._flavor_id)).to_dict()
             limits_dict = client.hypervisors.find(hypervisor_hostname=self._hostname).to_dict()
-            # if (server.flavor['id'] != str(self._flavor_id)):
-            #     sys.exit("flavor not correct!")
+
+            mem = limits_dict['memory_mb'] - flavor_dict['ram']
+            disk = limits_dict['free_disk_gb'] - flavor_dict['disk']
+            vcpus = (limits_dict['vcpus']-limits_dict['vcpus_used']) - flavor_dict['vcpus']#vcpu could be over used?
+
+            if ((mem<0) or (disk<0) or (vcpus<0)):
+                sys.exit("hypervisor resource shortage for allocating this flavor!")
