@@ -33,7 +33,8 @@ class FilterVmAction(NovaAction):
 
         if str(metadata.get('cluster')) == str(self._cluster_id):
             if str(self._uuid) == str(self._node_id):
-                return Result(data={'migrate': True, 'uuid': self._uuid})
+                hypervisor_hostname = client.servers.find(id=self._uuid).to_dict()['OS-EXT-SRV-ATTR:hypervisor_hostname']
+                return Result(data={'migrate': True, 'uuid': self._uuid, 'hypervisor_hostname': hypervisor_hostname})
 
         # Ether is no metadata for vm - check flavor.
         try:
@@ -53,4 +54,4 @@ class FilterVmAction(NovaAction):
         if str(cluster_id) == str(self._cluster_id):
             return Result(data={'migrate': True, 'uuid': self._uuid})
 
-        return Result(data={'migrate': False, 'uuid': self._uuid})
+        return Result(data={'migrate': False, 'uuid': self._uuid, 'hypervisor_hostname': ""})
