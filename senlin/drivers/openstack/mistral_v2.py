@@ -10,6 +10,8 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from oslo_config import cfg
+
 from senlin.drivers import base
 from senlin.drivers.openstack import sdk
 
@@ -53,3 +55,17 @@ class MistralClient(base.DriverBase):
     @sdk.translate_exception
     def execution_find(self, name_or_id):
         return self.conn.workflow.find_execution(name_or_id, ignore_missing=True)
+
+    @sdk.translate_exception
+    def wait_for_execution(self, execution, status='SUCCESS', failures=['ERROR'],
+                        interval=2, timeout=None):
+        '''Wait for execution creation complete'''
+        if timeout is None:
+            timeout = cfg.CONF.default_action_timeout
+
+        execution_obj = self.conn.workflow.find_execution(execution, False)
+        self.conn.workflow.wait_for_execution(execution_obj, status=status,
+                                          failures=failures,
+                                          interval=interval,
+                                          wait=timeout)
+        return

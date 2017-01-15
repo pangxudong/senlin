@@ -764,12 +764,13 @@ class ServerProfile(base.Profile):
             input_str = jsonutils.dumps(input_dict)
 
             execution = wfc.execution_create(workflow_name, input_str)
-            #wait_for_execution(execution.id)
+            wait_for_execution(execution.id)
+            output = wfc.execution_find(execution.id).output
         except exception.InternalError as ex:
             raise exception.EResourceUpdate(type='server', id=obj.physical_id,
                                       message=six.text_type(ex))
 
-        return self.server_id
+        return jsonutils.loads(output)["vm_id"][0]["uuid"]
 
     def workflow(self):
             if self._workflowclient is not None:
