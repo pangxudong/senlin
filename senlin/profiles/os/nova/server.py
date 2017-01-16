@@ -1051,8 +1051,8 @@ class ServerProfile(base.Profile):
             execution = wfc.execution_create(workflow_name, input_str)
             wait_for_execution(execution.id)
             output = wfc.execution_find(execution.id).output
-        except exception.InternalError as ex:
-            raise exception.EResourceUpdate(type='server', id=obj.physical_id,
+        except exc.InternalError as ex:
+            raise exc.EResourceUpdate(type='server', id=obj.physical_id,
                                       message=six.text_type(ex))
 
         return jsonutils.loads(output)["vm_id"][0]["uuid"]
