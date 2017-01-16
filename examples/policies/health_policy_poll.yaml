@@ -5,7 +5,7 @@ description: A policy for maintaining node health from a cluster.
 properties:
   detection:
     # Type for health checking, valid values include:
-    # NODE_STATUS_POLLING, LB_STATUS_POLLING, VM_LIFECYCLE_EVENTS
+    # NODE_STATUS_POLLING, LB_STATUS_POLLING, VM_EVENT_LISTENING
     type: NODE_STATUS_POLLING
 
     options:
@@ -15,14 +15,19 @@ properties:
   recovery:
     # List of actions that can be retried on a failed node
     actions:
-      - REBOOT
-      - REBUILD
-      - MIGRATE
-      - EVACUATE
-      - RECREATE
+      - name: cluster-coldmigration
+        type: WORKFLOW
+        params:
+          flavor_id: 1
+          definition: '/opt/stack/senlin/examples/workflow/cluster_migration/cold_migration/cluster-coldmigration.yaml'
+      # - name: cluster-livemigration
+      #   type: WORKFLOW
+      #   params:
+      #     host: ubuntu2
+      #     disk_over_commit: False
+      #     block_migration: False
+      #     definition: '/opt/stack/senlin/examples/workflow/cluster_migration/live_migration/cluster-livemigration.yaml'
 
     # List of services that are to be fenced
     fencing:
       - COMPUTE
-      - STORAGE
-      - NETWORK

@@ -68,10 +68,10 @@ class HealthPolicy(base.Policy):
     )
 
     RECOVERY_ACTION_VALUES = (
-        REBUILD, RECREATE,
+        REBUILD, RECREATE, WORKFLOW
         # REBOOT, MIGRATE, EVACUATE,
     ) = (
-        "REBUILD", "RECREATE",
+        "REBUILD", "RECREATE", "WORKFLOW"
         # 'REBOOT', 'MIGRATE', 'EVACUATE',
     )
 
@@ -81,6 +81,12 @@ class HealthPolicy(base.Policy):
     ) = (
         'COMPUTE',
         # 'STORAGE', 'NETWORK'
+    )
+
+    ACTION_KEYS = (
+        ACTION_NAME, ACTION_TYPE, ACTION_PARAMS,
+    ) = (
+        'name', 'type', 'params',
     )
 
     properties_schema = {
@@ -112,12 +118,29 @@ class HealthPolicy(base.Policy):
             schema={
                 RECOVERY_ACTIONS: schema.List(
                     _('List of actions to try for node recovery.'),
-                    schema=schema.String(
+                    schema=schema.Map(
                         _('Action to try for node recovery.'),
-                        constraints=[
-                            constraints.AllowedValues(RECOVERY_ACTION_VALUES),
-                        ]
-                    ),
+                        schema={
+                            ACTION_NAME: schema.String(
+                                _("Name of action to execute."),
+                                constraints=[
+                                    constraints.AllowedValues(
+                                        RECOVERY_ACTION_VALUES),
+                                ],
+                                required=True
+                            ),
+                            ACTION_TYPE: schema.String(
+                                _("Type of action to execute."),
+                                constraints=[
+                                    constraints.AllowedValues(
+                                        RECOVERY_ACTION_VALUES),
+                                ],
+                            ),
+                            ACTION_PARAMS: schema.Map(
+                                _("Parameters for the action")
+                            ),
+                        }
+                    )
                 ),
                 RECOVERY_FENCING: schema.List(
                     _('List of services to be fenced.'),
@@ -126,6 +149,7 @@ class HealthPolicy(base.Policy):
                         constraints=[
                             constraints.AllowedValues(FENCING_OPTION_VALUES),
                         ],
+                        required=True,
                     ),
                 ),
             }
