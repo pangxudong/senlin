@@ -13,6 +13,7 @@
 import random
 import six
 
+from senlin.common import consts
 from senlin.common import context
 from senlin.common import exception as exc
 from senlin.common.i18n import _
@@ -22,11 +23,18 @@ from senlin.db.sqlalchemy import api as db_api
 from senlin.drivers.container import docker_v1 as docker_driver
 from senlin.engine import cluster
 from senlin.engine import node as node_mod
+from senlin.objects import cluster as co
+from senlin.objects import node as no
 from senlin.profiles import base
 
 
 class DockerProfile(base.Profile):
     """Profile for a docker container."""
+    VERSIONS = {
+        '1.0': [
+            {'status': consts.EXPERIMENTAL, 'since': '2017.02'}
+        ]
+    }
 
     _VALID_HOST_TYPES = [
         HOST_NOVA_SERVER, HOST_HEAT_STACK,
@@ -67,7 +75,31 @@ class DockerProfile(base.Profile):
         ),
     }
 
-    OPERATIONS = {}
+    OP_NAMES = (
+        OP_RESTART, OP_PAUSE, OP_UNPAUSE,
+    ) = (
+        'restart', 'pause', 'unpause',
+    )
+
+    _RESTART_WAIT = (RESTART_WAIT) = ('wait_time')
+
+    OPERATIONS = {
+        OP_RESTART: schema.Operation(
+            _("Restart a container."),
+            schema={
+                RESTART_WAIT: schema.IntegerParam(
+                    _("Number of seconds to wait before killing the "
+                      "container.")
+                )
+            }
+        ),
+        OP_PAUSE: schema.Operation(
+            _("Pause a container.")
+        ),
+        OP_UNPAUSE: schema.Operation(
+            _("Unpause a container.")
+        )
+    }
 
     def __init__(self, type_name, name, **kwargs):
         super(DockerProfile, self).__init__(type_name, name, **kwargs)
@@ -77,10 +109,32 @@ class DockerProfile(base.Profile):
         self.host = None
         self.cluster = None
 
-    def add_dependents(self, context, profile_id):
-        host_cluster = self.properties.get(self.HOST_CLUSTER, None)
-        if host_cluster is not None:
-            db_api.cluster_add_dependents(context, host_cluster, profile_id)
+    @classmethod
+    def create(cls, ctx, name, spec, metadata=None):
+        profile = super(DockerProfile, cls).create(ctx, name, spec, metadata)
+
+        host_cluster = profile.properties.get(profile.HOST_CLUSTER, None)
+        if host_cluster:
+            db_api.cluster_add_dependents(ctx, host_cluster, profile.id)
+
+        host_node = profile.properties.get(profile.HOST_NODE, None)
+        if host_node:
+            db_api.node_add_dependents(ctx, host_node, profile.id, 'profile')
+
+        return profile
+
+    @classmethod
+    def delete(cls, ctx, profile_id):
+        obj = cls.load(ctx, profile_id=profile_id)
+        cluster_id = obj.properties.get(obj.HOST_CLUSTER, None)
+        if cluster_id:
+            db_api.cluster_remove_dependents(ctx, cluster_id, profile_id)
+
+        node_id = obj.properties.get(obj.HOST_NODE, None)
+        if node_id:
+            db_api.node_remove_dependents(ctx, node_id, profile_id, 'profile')
+
+        super(DockerProfile, cls).delete(ctx, profile_id)
 
     def docker(self, obj):
         """Construct docker client based on object.
@@ -120,53 +174,19 @@ class DockerProfile(base.Profile):
         :param host_node: The uuid of the hosting node.
         :param host_cluster: The uuid of the hosting cluster.
         """
-
+        host = None
         if host_node is not None:
-            host = self._get_specified_node(ctx, host_node)
-            if host_cluster is not None:
-                self.cluster = self._get_host_cluster(ctx, host_cluster)
-                if host.id not in [
-                        node.id for node in self.cluster.rt['nodes']]:
-                    msg = _("Host node %(host_node)s does not belong to "
-                            "cluster %(host_cluster)s") % {
-                        "host_node": host_node,
-                        "host_cluster": host_cluster}
-                    raise exc.InternalError(message=msg)
-        elif host_cluster is not None:
+            try:
+                host = node_mod.Node.load(ctx, node_id=host_node)
+            except exc.ResourceNotFound as ex:
+                msg = ex.enhance_msg('host', ex)
+                raise exc.InternalError(message=msg)
+            return host
+
+        if host_cluster is not None:
             host = self._get_random_node(ctx, host_cluster)
-        else:
-            msg = _("Either host_node or host_cluster should be provided")
-            raise exc.InternalError(message=msg)
 
         return host
-
-    def _get_host_cluster(self, ctx, host_cluster):
-        """Get the specified cluster information.
-
-        :param ctx: An instance of the request context.
-        :param host_cluster: The uuid of the hosting cluster.
-        """
-
-        try:
-            host_cluster = cluster.Cluster.load(ctx, cluster_id=host_cluster)
-        except exc.ResourceNotFound as ex:
-            msg = ex.enhance_msg('host', ex)
-            raise exc.InternalError(message=msg)
-        return host_cluster
-
-    def _get_specified_node(self, ctx, host_node):
-        """Get the specified node information.
-
-        :param ctx: An instance of the request context.
-        :param host_node: The uuid of the hosting node.
-        """
-
-        try:
-            host_node = node_mod.Node.load(ctx, node_id=host_node)
-        except exc.ResourceNotFound as ex:
-            msg = ex.enhance_msg('host', ex)
-            raise exc.InternalError(message=msg)
-        return host_node
 
     def _get_random_node(self, ctx, host_cluster):
         """Get a node randomly from the host cluster.
@@ -175,7 +195,13 @@ class DockerProfile(base.Profile):
         :param host_cluster: The uuid of the hosting cluster.
         """
 
-        self.cluster = self._get_host_cluster(ctx, host_cluster)
+        self.cluster = None
+        try:
+            self.cluster = cluster.Cluster.load(ctx, cluster_id=host_cluster)
+        except exc.ResourceNotFound as ex:
+            msg = ex.enhance_msg('host', ex)
+            raise exc.InternalError(message=msg)
+
         nodes = self.cluster.rt['nodes']
         if len(nodes) == 0:
             msg = _("The cluster (%s) contains no nodes") % host_cluster
@@ -225,6 +251,41 @@ class DockerProfile(base.Profile):
 
         return host_ip
 
+    def do_validate(self, obj):
+        """Validate if the spec has provided valid configuration.
+
+        :param obj: The node object.
+        """
+        cluster = self.properties[self.HOST_CLUSTER]
+        node = self.properties[self.HOST_NODE]
+        if all([cluster, node]):
+            msg = _("Either '%(c)s' or '%(n)s' should be specified, but not "
+                    "both.") % {'c': self.HOST_CLUSTER, 'n': self.HOST_NODE}
+            raise exc.InvalidSpec(message=msg)
+
+        if not any([cluster, node]):
+            msg = _("Either '%(c)s' or '%(n)s' should be specified."
+                    ) % {'c': self.HOST_CLUSTER, 'n': self.HOST_NODE}
+            raise exc.InvalidSpec(message=msg)
+
+        if cluster:
+            try:
+                co.Cluster.find(self.context, cluster)
+            except (exc.ResourceNotFound, exc.MultipleChoices):
+                msg = _("The specified %(key)s '%(val)s' could not be found "
+                        "or is not unique."
+                        ) % {'key': self.HOST_CLUSTER, 'val': cluster}
+                raise exc.InvalidSpec(message=msg)
+
+        if node:
+            try:
+                no.Node.find(self.context, node)
+            except (exc.ResourceNotFound, exc.MultipleChoices):
+                msg = _("The specified %(key)s '%(val)s' could not be found "
+                        "or is not unique."
+                        ) % {'key': self.HOST_NODE, 'val': node}
+                raise exc.InvalidSpec(message=msg)
+
     def do_create(self, obj):
         """Create a container instance using the given profile.
 
@@ -271,4 +332,62 @@ class DockerProfile(base.Profile):
                                         message=six.text_type(ex))
         ctx = context.get_admin_context()
         db_api.node_remove_dependents(ctx, self.host.id, obj.id)
+        return
+
+    def handle_reboot(self, obj, **options):
+        """Handler for a reboot operation.
+
+        :param obj: The node object representing the container.
+        :returns: None
+        """
+        if not obj.physical_id:
+            return
+
+        if 'timeout' in options:
+            params = {'timeout': options['timeout']}
+        else:
+            params = {}
+        try:
+            self.docker(obj).reboot(obj.physical_id, **params)
+        except exc.InternalError as ex:
+            raise exc.EResourceOperation(type='container',
+                                         id=obj.physical_id[:8],
+                                         op='rebooting',
+                                         message=six.text_type(ex))
+        return
+
+    def handle_pause(self, obj):
+        """Handler for a pause operation.
+
+        :param obj: The node object representing the container.
+        :returns: None
+        """
+        if not obj.physical_id:
+            return
+
+        try:
+            self.docker(obj).pause(obj.physical_id)
+        except exc.InternalError as ex:
+            raise exc.EResourceOperation(type='container',
+                                         id=obj.physical_id[:8],
+                                         op='pausing',
+                                         message=six.text_type(ex))
+        return
+
+    def handle_unpause(self, obj):
+        """Handler for an unpause operation.
+
+        :param obj: The node object representing the container.
+        :returns: None
+        """
+        if not obj.physical_id:
+            return
+
+        try:
+            self.docker(obj).unpause(obj.physical_id)
+        except exc.InternalError as ex:
+            raise exc.EResourceOperation(type='container',
+                                         id=obj.physical_id[:8],
+                                         op='unpausing',
+                                         message=six.text_type(ex))
         return

@@ -12,6 +12,9 @@
 
 """Node object."""
 
+from oslo_utils import uuidutils
+
+from senlin.common import exception
 from senlin.db import api as db_api
 from senlin.objects import base
 from senlin.objects import fields
@@ -50,6 +53,38 @@ class Node(base.SenlinObject, base.VersionedObjectDictCompat):
         return cls._from_db_object(context, cls(context), obj)
 
     @classmethod
+    def find(cls, context, identity, project_safe=True):
+        """Find a node with the given identity.
+
+        :param context: An instance of the request context.
+        :param identity: The UUID, name or short-id of a node.
+        :param project_safe: A boolean indicating whether only nodes from the
+                             same project as the requesting one are qualified
+                             to be returned.
+        :return: A DB object of Node.
+        :raises: An exception of ``ResourceNotFound`` if no matching node is
+                 or an exception of ``MultipleChoices`` more than one node
+                 found matching the criteria.
+        """
+        node = None
+        if uuidutils.is_uuid_like(identity):
+            node = cls.get(context, identity, project_safe=project_safe)
+            if not node:
+                node = cls.get_by_name(context, identity,
+                                       project_safe=project_safe)
+        else:
+            node = cls.get_by_name(context, identity,
+                                   project_safe=project_safe)
+            if not node:
+                node = cls.get_by_short_id(context, identity,
+                                           project_safe=project_safe)
+
+        if node is None:
+            raise exception.ResourceNotFound(type='node', id=identity)
+
+        return node
+
+    @classmethod
     def get(cls, context, node_id, **kwargs):
         obj = db_api.node_get(context, node_id, **kwargs)
         return cls._from_db_object(context, cls(), obj)
@@ -66,11 +101,17 @@ class Node(base.SenlinObject, base.VersionedObjectDictCompat):
 
     @classmethod
     def get_all(cls, context, **kwargs):
+        # TODO(anyone): This has to be improved. 1. The DB API called always
+        # does pagination which is an overkill. 2. we may need a new API for
+        # getting node IDs only since that is a common case for internal use.
         objs = db_api.node_get_all(context, **kwargs)
         return [cls._from_db_object(context, cls(), obj) for obj in objs]
 
     @classmethod
     def get_all_by_cluster(cls, context, cluster_id, **kwargs):
+        # TODO(anyone): This has to be improved. 1. The DB API called doesn't
+        # support filters. 2. we may need a new API for getting node IDs only
+        # since that is a common case for internal use.
         objs = db_api.node_get_all_by_cluster(context, cluster_id, **kwargs)
         return [cls._from_db_object(context, cls(), obj) for obj in objs]
 

@@ -17,6 +17,7 @@ Implementation of SQLAlchemy backend.
 import six
 import sys
 import threading
+import time
 
 from oslo_config import cfg
 from oslo_db import api as oslo_db_api
@@ -28,6 +29,7 @@ from oslo_utils import timeutils
 import osprofiler.sqlalchemy
 import sqlalchemy
 from sqlalchemy.orm import joinedload_all
+from sqlalchemy.sql.expression import func
 
 from senlin.common import consts
 from senlin.common import exception
@@ -81,7 +83,7 @@ def query_by_short_id(context, model, short_id, project_safe=True):
     q = model_query(context, model)
     q = q.filter(model.id.like('%s%%' % short_id))
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         q = q.filter_by(project=context.project)
 
     if q.count() == 1:
@@ -96,7 +98,7 @@ def query_by_name(context, model, name, project_safe=True):
     q = model_query(context, model)
     q = q.filter_by(name=name)
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         q = q.filter_by(project=context.project)
 
     if q.count() == 1:
@@ -122,7 +124,7 @@ def cluster_get(context, cluster_id, project_safe=True):
     if cluster is None:
         return None
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         if context.project != cluster.project:
             return None
     return cluster
@@ -226,7 +228,7 @@ def node_get(context, node_id, project_safe=True):
     if not node:
         return None
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         if context.project != node.project:
             return None
 
@@ -310,50 +312,62 @@ def node_update(context, node_id, values):
                 cluster.save(session)
 
 
-def node_add_dependents(context, node_id, container_id):
-    '''Add ID of container node to 'dependents' property of host node.
+def node_add_dependents(context, depended, dependent, dep_type=None):
+    """Add dependency between nodes.
 
-    :param node_id: ID of the host node.
-    :param container_id: ID of the container node.
+    :param depended: ID of the depended dependent.
+    :param dependent: ID of the dependent node or profile which has
+                     dependencies on depended node.
+    :param dep_type: The type of dependency. It can be 'node' indicating a
+                     dependency beween two nodes; or 'profile' indicating a
+                     dependency from profile to node.
     :raises ResourceNotFound: The specified node does not exist in database.
-    '''
+    """
     with session_for_write() as session:
-        node = session.query(models.Node).get(node_id)
-        if not node:
-            raise exception.ResourceNotFound(type='node', id=node_id)
+        dep_node = session.query(models.Node).get(depended)
+        if not dep_node:
+            raise exception.ResourceNotFound(type='node', id=depended)
 
-        containers = node.dependents.get('containers', None)
-        if not containers:
-            dependents = {'containers': [container_id]}
+        if dep_type is None or dep_type == 'node':
+            key = 'nodes'
         else:
-            containers.append(container_id)
-            dependents = {'containers': dependents}
-        values = {'dependents': dependents}
-        node.update(values)
-        node.save(session)
+            key = 'profiles'
+        dependents = dep_node.dependents.get(key, [])
+        dependents.append(dependent)
+        dep_node.dependents.update({key: dependents})
+        dep_node.save(session)
 
 
-def node_remove_dependents(context, node_id, container_id):
-    '''Remove ID of container node from 'dependents' property of host node.
+def node_remove_dependents(context, depended, dependent, dep_type=None):
+    """Remove dependency between nodes.
 
-    :param node_id: ID of the host node.
-    :param container_id: ID of the container node.
+    :param depended: ID of the depended node.
+    :param dependent: ID of the node or profile which has dependencies on
+                     the depended node.
+    :param dep_type: The type of dependency. It can be 'node' indicating a
+                     dependency beween two nodes; or 'profile' indicating a
+                     dependency from profile to node.
+
     :raises ResourceNotFound: The specified node does not exist in database.
-    '''
+    """
     with session_for_write() as session:
-        node = session.query(models.Node).get(node_id)
-        if not node:
-            raise exception.ResourceNotFound(type='node', id=node_id)
+        dep_node = session.query(models.Node).get(depended)
+        if not dep_node:
+            raise exception.ResourceNotFound(type='node', id=depended)
 
-        containers = node.dependents['containers']
-        containers.remove(container_id)
-        if len(containers) > 0:
-            dependents = {'containers': containers}
+        if dep_type is None or dep_type == 'node':
+            key = 'nodes'
         else:
-            dependents = {}
-        values = {'dependents': dependents}
-        node.update(values)
-        node.save(session)
+            key = 'profiles'
+
+        dependents = dep_node.dependents.get(key, [])
+        if dependent in dependents:
+            dependents.remove(dependent)
+            if len(dependents) > 0:
+                dep_node.dependents.update({key: dependents})
+            else:
+                dep_node.dependents.pop(key)
+            dep_node.save(session)
 
 
 def node_migrate(context, node_id, to_cluster, timestamp, role=None):
@@ -403,8 +417,25 @@ def cluster_lock_acquire(cluster_id, action_id, scope):
                                       action_ids=[six.text_type(action_id)],
                                       semaphore=scope)
             session.add(lock)
-
         return lock.action_ids
+
+
+def _release_cluster_lock(session, lock, action_id, scope):
+
+    success = False
+    if (scope == -1 and lock.semaphore < 0) or lock.semaphore == 1:
+        if six.text_type(action_id) in lock.action_ids:
+            session.delete(lock)
+            success = True
+    elif six.text_type(action_id) in lock.action_ids:
+        if lock.semaphore == 1:
+            session.delete(lock)
+        else:
+            lock.action_ids.remove(six.text_type(action_id))
+            lock.semaphore -= 1
+            lock.save(session)
+        success = True
+    return success
 
 
 def cluster_lock_release(cluster_id, action_id, scope):
@@ -421,21 +452,7 @@ def cluster_lock_release(cluster_id, action_id, scope):
         if lock is None:
             return False
 
-        success = False
-        if scope == -1 or lock.semaphore == 1:
-            if six.text_type(action_id) in lock.action_ids:
-                session.delete(lock)
-                success = True
-        elif action_id in lock.action_ids:
-            if lock.semaphore == 1:
-                session.delete(lock)
-            else:
-                lock.action_ids.remove(six.text_type(action_id))
-                lock.semaphore -= 1
-                lock.save(session)
-            success = True
-
-        return success
+        return _release_cluster_lock(session, lock, action_id, scope)
 
 
 def cluster_lock_steal(cluster_id, action_id):
@@ -504,7 +521,7 @@ def policy_get(context, policy_id, project_safe=True):
     if policy is None:
         return None
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         if context.project != policy.project:
             return None
 
@@ -679,14 +696,9 @@ def cluster_add_dependents(context, cluster_id, profile_id):
         if cluster is None:
             raise exception.ResourceNotFound(type='cluster', id=cluster_id)
 
-        dependents = cluster.dependents
-        profile = dependents.get('profile')
-        if not profile:
-            profile_deps = {'profile': [profile_id]}
-        elif profile_id not in profile:
-            profile.append(profile_id)
-            profile_deps = {'profile': profile}
-        cluster.dependents.update(profile_deps)
+        profiles = cluster.dependents.get('profiles', [])
+        profiles.append(profile_id)
+        cluster.dependents.update({'profiles': profiles})
         cluster.save(session)
 
 
@@ -703,15 +715,14 @@ def cluster_remove_dependents(context, cluster_id, profile_id):
         if cluster is None:
             raise exception.ResourceNotFound(type='cluster', id=cluster_id)
 
-        profile = cluster.dependents.get('profile')
-        if profile is not None and profile_id in profile:
-            profile.remove(profile_id)
-            if len(profile) == 0:
-                cluster.dependents.pop('profile')
+        profiles = cluster.dependents.get('profiles', [])
+        if profile_id in profiles:
+            profiles.remove(profile_id)
+            if len(profiles) == 0:
+                cluster.dependents.pop('profiles')
             else:
-                profile_deps = {'profile': profile}
-                cluster.dependents.update(profile_deps)
-        cluster.save(session)
+                cluster.dependents.update({'profiles': profiles})
+            cluster.save(session)
 
 
 # Profiles
@@ -730,7 +741,7 @@ def profile_get(context, profile_id, project_safe=True):
     if profile is None:
         return None
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         if context.project != profile.project:
             return None
 
@@ -843,7 +854,7 @@ def event_create(context, values):
 
 def event_get(context, event_id, project_safe=True):
     event = model_query(context, models.Event).get(event_id)
-    if not context.is_admin and project_safe and event is not None:
+    if project_safe and event is not None:
         if event.project != context.project:
             return None
 
@@ -880,7 +891,7 @@ def event_get_all(context, limit=None, marker=None, sort=None, filters=None,
 def event_count_by_cluster(context, cluster_id, project_safe=True):
     query = model_query(context, models.Event)
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         query = query.filter_by(project=context.project)
     count = query.filter_by(cluster_id=cluster_id).count()
 
@@ -892,7 +903,7 @@ def event_get_all_by_cluster(context, cluster_id, limit=None, marker=None,
     query = model_query(context, models.Event)
     query = query.filter_by(cluster_id=cluster_id)
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         query = query.filter_by(project=context.project)
 
     return _event_filter_paginate_query(context, query, filters=filters,
@@ -903,7 +914,7 @@ def event_prune(context, cluster_id, project_safe=True):
     with session_for_write() as session:
         query = session.query(models.Event).with_for_update()
         query = query.filter_by(cluster_id=cluster_id)
-        if not context.is_admin and project_safe:
+        if project_safe:
             query = query.filter_by(project=context.project)
 
         return query.delete(synchronize_session='fetch')
@@ -934,7 +945,7 @@ def action_get(context, action_id, project_safe=True, refresh=False):
         if action is None:
             return None
 
-        if not context.is_admin and project_safe:
+        if project_safe:
             if action.project != context.project:
                 return None
 
@@ -1148,11 +1159,12 @@ def action_acquire(context, action_id, owner, timestamp):
 
 @oslo_db_api.wrap_db_retry(max_retries=3, retry_on_deadlock=True,
                            retry_interval=0.5, inc_retry_interval=True)
-def action_acquire_1st_ready(context, owner, timestamp):
+def action_acquire_random_ready(context, owner, timestamp):
     with session_for_write() as session:
         action = session.query(models.Action).\
             filter_by(status=consts.ACTION_READY).\
             filter_by(owner=None).\
+            order_by(func.random()).\
             with_for_update().first()
 
         if action:
@@ -1237,7 +1249,7 @@ def receiver_get(context, receiver_id, project_safe=True):
     if not receiver:
         return None
 
-    if not context.is_admin and project_safe:
+    if project_safe:
         if context.project != receiver.project:
             return None
 
@@ -1316,6 +1328,26 @@ def service_get(context, service_id):
 
 def service_get_all(context):
     return model_query(context, models.Service).all()
+
+
+def gc_by_engine(context, engine_id):
+    # Get all actions locked by an engine
+    with session_for_write() as session:
+        q_actions = session.query(models.Action).filter_by(owner=engine_id)
+        timestamp = time.time()
+        for a in q_actions.all():
+            # Release all node locks
+            query = session.query(models.NodeLock).filter_by(action_id=a.id)
+            query.delete(synchronize_session=False)
+
+            # Release all cluster locks
+            for cl in session.query(models.ClusterLock).all():
+                res = _release_cluster_lock(session, cl, a.id, -1)
+                if not res:
+                    _release_cluster_lock(session, cl, a.id, 1)
+
+            # mark action failed and relase lock
+            _mark_failed(session, a.id, timestamp, reason="Engine failure")
 
 
 # HealthRegistry

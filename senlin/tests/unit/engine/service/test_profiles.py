@@ -10,6 +10,8 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import copy
+
 import mock
 from oslo_config import cfg
 from oslo_messaging.rpc import dispatcher as rpc
@@ -17,7 +19,6 @@ from oslo_utils import uuidutils
 import six
 
 from senlin.common import exception as exc
-from senlin.db.sqlalchemy import api as db_api
 from senlin.engine import environment
 from senlin.engine import service
 from senlin.objects import profile as po
@@ -54,92 +55,27 @@ class ProfileTest(base.SenlinTestCase):
             }
         }
 
-    @mock.patch.object(po.Profile, 'get')
-    def test_profile_find_by_uuid(self, mock_get):
-        x_profile = mock.Mock()
-        mock_get.return_value = x_profile
-
-        aid = uuidutils.generate_uuid()
-        result = self.eng.profile_find(self.ctx, aid)
-
-        self.assertEqual(x_profile, result)
-        mock_get.assert_called_once_with(self.ctx, aid, project_safe=True)
-
-    @mock.patch.object(po.Profile, 'get_by_name')
-    @mock.patch.object(po.Profile, 'get')
-    def test_profile_find_by_uuid_as_name(self, mock_get, mock_get_name):
-        x_profile = mock.Mock()
-        mock_get_name.return_value = x_profile
-        mock_get.return_value = None
-
-        aid = uuidutils.generate_uuid()
-        result = self.eng.profile_find(self.ctx, aid, project_safe=False)
-
-        self.assertEqual(x_profile, result)
-        mock_get.assert_called_once_with(self.ctx, aid, project_safe=False)
-        mock_get_name.assert_called_once_with(self.ctx, aid,
-                                              project_safe=False)
-
-    @mock.patch.object(po.Profile, 'get_by_name')
-    def test_profile_find_by_name(self, mock_get_name):
-        x_profile = mock.Mock()
-        mock_get_name.return_value = x_profile
-
-        aid = 'this-is-not-uuid'
-        result = self.eng.profile_find(self.ctx, aid)
-
-        self.assertEqual(x_profile, result)
-        mock_get_name.assert_called_once_with(self.ctx, aid, project_safe=True)
-
-    @mock.patch.object(po.Profile, 'get_by_short_id')
-    @mock.patch.object(po.Profile, 'get_by_name')
-    def test_profile_find_by_shortid(self, mock_get_name, mock_get_shortid):
-        x_profile = mock.Mock()
-        mock_get_shortid.return_value = x_profile
-        mock_get_name.return_value = None
-
-        aid = 'abcd-1234-abcd'
-        result = self.eng.profile_find(self.ctx, aid, project_safe=False)
-
-        self.assertEqual(x_profile, result)
-        mock_get_name.assert_called_once_with(self.ctx, aid,
-                                              project_safe=False)
-        mock_get_shortid.assert_called_once_with(self.ctx, aid,
-                                                 project_safe=False)
-
-    @mock.patch.object(po.Profile, 'get_by_name')
-    def test_profile_find_not_found(self, mock_get_name):
-        mock_get_name.return_value = None
-
-        ex = self.assertRaises(exc.ResourceNotFound,
-                               self.eng.profile_find,
-                               self.ctx, 'Bogus')
-
-        self.assertEqual('The profile (Bogus) could not be found.',
-                         six.text_type(ex))
-        mock_get_name.assert_called_once_with(self.ctx, 'Bogus',
-                                              project_safe=True)
-
-    @mock.patch.object(pb.Profile, 'load_all')
-    def test_profile_list2(self, mock_load):
+    @mock.patch.object(po.Profile, 'get_all')
+    def test_profile_list(self, mock_get):
         x_obj_1 = mock.Mock()
         x_obj_1.to_dict.return_value = {'k': 'v1'}
         x_obj_2 = mock.Mock()
         x_obj_2.to_dict.return_value = {'k': 'v2'}
-        mock_load.return_value = [x_obj_1, x_obj_2]
+        mock_get.return_value = [x_obj_1, x_obj_2]
         req = vorp.ProfileListRequest(project_safe=True)
 
-        result = self.eng.profile_list2(self.ctx, req.obj_to_primitive())
+        result = self.eng.profile_list(self.ctx, req.obj_to_primitive())
 
         self.assertEqual([{'k': 'v1'}, {'k': 'v2'}], result)
-        mock_load.assert_called_once_with(self.ctx, project_safe=True)
+        mock_get.assert_called_once_with(self.ctx, project_safe=True)
 
-    @mock.patch.object(pb.Profile, 'load_all')
-    def test_profile_list2_with_params(self, mock_load):
-        mock_load.return_value = []
+    @mock.patch.object(po.Profile, 'get_all')
+    def test_profile_list_with_params(self, mock_get):
+        mock_get.return_value = []
+        marker = uuidutils.generate_uuid()
         params = {
             'limit': 10,
-            'marker': 'KEY',
+            'marker': marker,
             'name': ['foo'],
             'type': ['os.nova.server'],
             'sort': 'name:asc',
@@ -147,121 +83,28 @@ class ProfileTest(base.SenlinTestCase):
         }
         req = vorp.ProfileListRequest(**params)
 
-        result = self.eng.profile_list2(self.ctx, req.obj_to_primitive())
+        result = self.eng.profile_list(self.ctx, req.obj_to_primitive())
 
         self.assertEqual([], result)
-        mock_load.assert_called_once_with(self.ctx, limit=10, marker='KEY',
-                                          filters={'name': ['foo'],
-                                                   'type': ['os.nova.server']},
-                                          sort='name:asc',
-                                          project_safe=True)
+        mock_get.assert_called_once_with(self.ctx, limit=10, marker=marker,
+                                         filters={'name': ['foo'],
+                                                  'type': ['os.nova.server']},
+                                         sort='name:asc',
+                                         project_safe=True)
 
-    def test_profile_create2_default(self):
+    @mock.patch.object(pb.Profile, 'create')
+    def test_profile_create_default(self, mock_create):
+        x_profile = mock.Mock()
+        x_profile.to_dict.return_value = {'foo': 'bar'}
+        mock_create.return_value = x_profile
         self._setup_fakes()
         body = vorp.ProfileCreateRequestBody(name='p-1', spec=self.spec,
                                              metadata={'foo': 'bar'})
         req = vorp.ProfileCreateRequest(profile=body)
 
-        result = self.eng.profile_create2(self.ctx, req.obj_to_primitive())
+        result = self.eng.profile_create(self.ctx, req.obj_to_primitive())
 
-        self.assertEqual('p-1', result['name'])
-        self.assertEqual('TestProfile-1.0', result['type'])
-        self.assertEqual(self.spec, result['spec'])
-        self.assertEqual({'foo': 'bar'}, result['metadata'])
-        self.assertIsNone(result['updated_at'])
-        self.assertIsNotNone(result['created_at'])
-        self.assertIsNotNone(result['id'])
-
-    @mock.patch.object(po.Profile, 'get_by_name')
-    def test_profile_create2_name_conflict(self, mock_get):
-        cfg.CONF.set_override('name_unique', True, enforce_type=True)
-        mock_get.return_value = mock.Mock()
-
-        spec = {
-            'type': 'FakeProfile',
-            'version': '1.0',
-            'properties': {
-                'LIST': ['A', 'B'],
-                'MAP': {'KEY1': 11, 'KEY2': 12},
-            }
-        }
-
-        body = vorp.ProfileCreateRequestBody(name='FAKE_NAME', spec=spec)
-        req = vorp.ProfileCreateRequest(profile=body)
-        ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_create2,
-                               self.ctx, req.obj_to_primitive())
-        self.assertEqual(exc.BadRequest, ex.exc_info[0])
-        self.assertEqual("The request is malformed: A profile named "
-                         "'FAKE_NAME' already exists.",
-                         six.text_type(ex.exc_info[1]))
-        mock_get.assert_called_once_with(self.ctx, 'FAKE_NAME')
-
-    def test_profile_create2_type_not_found(self):
-        # We skip the fakes setup, so we won't get the proper profile type
-        spec = {
-            'type': 'FakeProfile',
-            'version': '1.0',
-            'properties': {
-                'LIST': ['A', 'B'],
-                'MAP': {'KEY1': 11, 'KEY2': 12},
-            }
-        }
-
-        body = vorp.ProfileCreateRequestBody(name='p-2', spec=spec)
-        req = vorp.ProfileCreateRequest(profile=body)
-        ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_create2,
-                               self.ctx, req.obj_to_primitive())
-
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
-        self.assertEqual("The specified profile_type "
-                         "(FakeProfile-1.0) could not be found.",
-                         six.text_type(ex.exc_info[1]))
-
-    def test_profile_create2_invalid_spec(self):
-        # This test is for the profile object constructor which may throw
-        # exceptions if the spec is invalid
-        self._setup_fakes()
-        self.spec['properties'] = {'KEY3': 'value3'}
-
-        body = vorp.ProfileCreateRequestBody(name='foo', spec=self.spec)
-        req = vorp.ProfileCreateRequest(profile=body)
-        ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_create2,
-                               self.ctx, req.obj_to_primitive())
-
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
-        self.assertEqual("Unrecognizable spec item 'KEY3'",
-                         six.text_type(ex.exc_info[1]))
-
-    def test_profile_create2_failed_validation(self):
-        self._setup_fakes()
-
-        mock_validate = self.patchobject(fakes.TestProfile, 'validate')
-        mock_validate.side_effect = exc.InvalidSpec(message='BOOM')
-
-        body = vorp.ProfileCreateRequestBody(name='p-2', spec=self.spec)
-        req = vorp.ProfileCreateRequest(profile=body)
-        ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_create2,
-                               self.ctx, req.obj_to_primitive())
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
-        self.assertEqual('BOOM', six.text_type(ex.exc_info[1]))
-
-    @mock.patch.object(pb.Profile, 'add_dependents')
-    def test_profile_create_default(self, mock_add):
-        self._setup_fakes()
-
-        result = self.eng.profile_create(self.ctx, 'p-1', self.spec)
-
-        self.assertEqual('p-1', result['name'])
-        self.assertEqual('TestProfile-1.0', result['type'])
-        self.assertEqual(self.spec, result['spec'])
-        self.assertIsNone(result['updated_at'])
-        self.assertIsNotNone(result['created_at'])
-        self.assertIsNotNone(result['id'])
-        mock_add.assert_called_once_with(self.ctx, result['id'])
+        self.assertEqual({'foo': 'bar'}, result)
 
     @mock.patch.object(po.Profile, 'get_by_name')
     def test_profile_create_name_conflict(self, mock_get):
@@ -277,63 +120,47 @@ class ProfileTest(base.SenlinTestCase):
             }
         }
 
+        body = vorp.ProfileCreateRequestBody(name='FAKE_NAME', spec=spec)
+        req = vorp.ProfileCreateRequest(profile=body)
         ex = self.assertRaises(rpc.ExpectedException,
                                self.eng.profile_create,
-                               self.ctx, 'FAKE_NAME', spec)
+                               self.ctx, req.obj_to_primitive())
         self.assertEqual(exc.BadRequest, ex.exc_info[0])
         self.assertEqual("The request is malformed: A profile named "
                          "'FAKE_NAME' already exists.",
                          six.text_type(ex.exc_info[1]))
         mock_get.assert_called_once_with(self.ctx, 'FAKE_NAME')
 
-    def test_profile_create_type_not_found(self):
-        # We skip the fakes setup, so we won't get the proper profile type
-        spec = {
-            'type': 'FakeProfile',
-            'version': '1.0',
-            'properties': {
-                'LIST': ['A', 'B'],
-                'MAP': {'KEY1': 11, 'KEY2': 12},
-            }
-        }
-
-        ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_create,
-                               self.ctx, 'p-2', spec)
-
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
-        self.assertEqual("The specified profile_type "
-                         "(FakeProfile-1.0) could not be found.",
-                         six.text_type(ex.exc_info[1]))
-
-    def test_profile_create_invalid_spec(self):
-        # This test is for the profile object constructor which may throw
-        # exceptions if the spec is invalid
+    @mock.patch.object(pb.Profile, 'create')
+    def test_profile_create_type_not_found(self, mock_create):
         self._setup_fakes()
-        self.spec['properties'] = {'KEY3': 'value3'}
+        spec = copy.deepcopy(self.spec)
+        spec['type'] = 'Bogus'
+        body = vorp.ProfileCreateRequestBody(name='foo', spec=spec)
+        req = vorp.ProfileCreateRequest(profile=body)
 
         ex = self.assertRaises(rpc.ExpectedException,
                                self.eng.profile_create,
-                               self.ctx, 'FAKE_PROFILE', self.spec)
+                               self.ctx, req.obj_to_primitive())
 
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
-        self.assertEqual("Unrecognizable spec item 'KEY3'",
+        self.assertEqual(exc.ResourceNotFound, ex.exc_info[0])
+        self.assertEqual("The profile_type (Bogus-1.0) could not be found.",
                          six.text_type(ex.exc_info[1]))
 
-    def test_profile_create_failed_validation(self):
+    @mock.patch.object(pb.Profile, 'create')
+    def test_profile_create_invalid_spec(self, mock_create):
         self._setup_fakes()
-
-        mock_validate = self.patchobject(fakes.TestProfile, 'validate')
-        mock_validate.side_effect = exc.InvalidSpec(message='BOOM')
-
+        mock_create.side_effect = exc.InvalidSpec(message="badbad")
+        body = vorp.ProfileCreateRequestBody(name='foo', spec=self.spec)
+        req = vorp.ProfileCreateRequest(profile=body)
         ex = self.assertRaises(rpc.ExpectedException,
                                self.eng.profile_create,
-                               self.ctx, 'p-2', self.spec)
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
-        self.assertEqual('BOOM',
-                         six.text_type(ex.exc_info[1]))
+                               self.ctx, req.obj_to_primitive())
 
-    def test_profile_validate2_pass(self):
+        self.assertEqual(exc.InvalidSpec, ex.exc_info[0])
+        self.assertEqual("badbad", six.text_type(ex.exc_info[1]))
+
+    def test_profile_validate(self):
         self._setup_fakes()
 
         expected_resp = {
@@ -360,89 +187,44 @@ class ProfileTest(base.SenlinTestCase):
 
         body = vorp.ProfileValidateRequestBody(spec=self.spec)
         request = vorp.ProfileValidateRequest(profile=body)
-        resp = self.eng.profile_validate2(self.ctx, request.obj_to_primitive())
-        self.assertEqual(expected_resp, resp)
-
-    def test_profile_validate2_failed(self):
-        self._setup_fakes()
-
-        mock_do_validate = self.patchobject(fakes.TestProfile, 'do_validate')
-        mock_do_validate.side_effect = exc.InvalidSpec(message='BOOM')
-
-        body = vorp.ProfileValidateRequestBody(spec=self.spec)
-        request = vorp.ProfileValidateRequest(profile=body)
-
-        ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_validate2,
-                               self.ctx, request.obj_to_primitive())
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
-        self.assertEqual('BOOM',
-                         six.text_type(ex.exc_info[1]))
-
-    def test_profile_validate_pass(self):
-        self._setup_fakes()
-
-        expected_resp = {
-            'created_at': None,
-            'domain': '',
-            'id': None,
-            'metadata': None,
-            'name': 'validated_profile',
-            'project': 'profile_test_project',
-            'type': 'TestProfile-1.0',
-            'updated_at': None,
-            'user': 'test_user_id',
-            'spec': {
-                'type': 'TestProfile',
-                'version': '1.0',
-                'properties': {
-                    'INT': 1,
-                    'STR': 'str',
-                    'LIST': ['v1', 'v2'],
-                    'MAP': {'KEY1': 1, 'KEY2': 'v2'},
-                }
-            }
-        }
-
-        resp = self.eng.profile_validate(self.ctx, self.spec)
+        resp = self.eng.profile_validate(self.ctx, request.obj_to_primitive())
         self.assertEqual(expected_resp, resp)
 
     def test_profile_validate_failed(self):
         self._setup_fakes()
 
         mock_do_validate = self.patchobject(fakes.TestProfile, 'do_validate')
-        mock_do_validate.side_effect = exc.InvalidSpec(message='BOOM')
+        mock_do_validate.side_effect = exc.ESchema(message='BOOM')
+
+        body = vorp.ProfileValidateRequestBody(spec=self.spec)
+        request = vorp.ProfileValidateRequest(profile=body)
 
         ex = self.assertRaises(rpc.ExpectedException,
                                self.eng.profile_validate,
-                               self.ctx, self.spec)
-        self.assertEqual(exc.SpecValidationFailed, ex.exc_info[0])
+                               self.ctx, request.obj_to_primitive())
+        self.assertEqual(exc.InvalidSpec, ex.exc_info[0])
         self.assertEqual('BOOM',
                          six.text_type(ex.exc_info[1]))
 
-    @mock.patch.object(pb.Profile, 'load')
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_get2(self, mock_find, mock_load):
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_get(self, mock_find):
         x_obj = mock.Mock()
         mock_find.return_value = x_obj
-        x_profile = mock.Mock()
-        x_profile.to_dict.return_value = {'foo': 'bar'}
-        mock_load.return_value = x_profile
+        x_obj.to_dict.return_value = {'foo': 'bar'}
         req = vorp.ProfileGetRequest(identity='FAKE_PROFILE')
 
-        result = self.eng.profile_get2(self.ctx, req.obj_to_primitive())
+        result = self.eng.profile_get(self.ctx, req.obj_to_primitive())
 
         self.assertEqual({'foo': 'bar'}, result)
         mock_find.assert_called_once_with(self.ctx, 'FAKE_PROFILE')
-        mock_load.assert_called_once_with(self.ctx, profile=x_obj)
 
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_get2_not_found(self, mock_find):
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_get_not_found(self, mock_find):
         mock_find.side_effect = exc.ResourceNotFound(type='profile',
                                                      id='Bogus')
         req = vorp.ProfileGetRequest(identity='Bogus')
         ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_get2, self.ctx,
+                               self.eng.profile_get, self.ctx,
                                req.obj_to_primitive())
 
         self.assertEqual(exc.ResourceNotFound, ex.exc_info[0])
@@ -451,8 +233,8 @@ class ProfileTest(base.SenlinTestCase):
         mock_find.assert_called_once_with(self.ctx, 'Bogus')
 
     @mock.patch.object(pb.Profile, 'load')
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_update2(self, mock_find, mock_load):
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_update(self, mock_find, mock_load):
         x_obj = mock.Mock()
         mock_find.return_value = x_obj
         x_profile = mock.Mock()
@@ -465,7 +247,7 @@ class ProfileTest(base.SenlinTestCase):
         req_body = vorp.ProfileUpdateRequestBody(**params)
         req = vorp.ProfileUpdateRequest(identity='PID', profile=req_body)
 
-        result = self.eng.profile_update2(self.ctx, req.obj_to_primitive())
+        result = self.eng.profile_update(self.ctx, req.obj_to_primitive())
         self.assertEqual({'foo': 'bar'}, result)
         mock_find.assert_called_once_with(self.ctx, 'PID')
         mock_load.assert_called_once_with(self.ctx, profile=x_obj)
@@ -473,8 +255,30 @@ class ProfileTest(base.SenlinTestCase):
         self.assertEqual({'K': 'V'}, x_profile.metadata)
         x_profile.store.assert_called_once_with(self.ctx)
 
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_update2_not_found(self, mock_find):
+    @mock.patch.object(pb.Profile, 'load')
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_update_name_none(self, mock_find, mock_load):
+        x_obj = mock.Mock()
+        mock_find.return_value = x_obj
+        x_profile = mock.Mock()
+        x_profile.name = 'OLD_NAME'
+        x_profile.to_dict.return_value = {'foo': 'bar'}
+        mock_load.return_value = x_profile
+
+        params = {'name': None, 'metadata': {'K': 'V'}}
+        req_body = vorp.ProfileUpdateRequestBody(**params)
+        req = vorp.ProfileUpdateRequest(identity='PID', profile=req_body)
+
+        result = self.eng.profile_update(self.ctx, req.obj_to_primitive())
+        self.assertEqual({'foo': 'bar'}, result)
+        mock_find.assert_called_once_with(self.ctx, 'PID')
+        mock_load.assert_called_once_with(self.ctx, profile=x_obj)
+        self.assertEqual('OLD_NAME', x_profile.name)
+        self.assertEqual({'K': 'V'}, x_profile.metadata)
+        x_profile.store.assert_called_once_with(self.ctx)
+
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_update_not_found(self, mock_find):
 
         mock_find.side_effect = exc.ResourceNotFound(type='profile',
                                                      id='Bogus')
@@ -483,7 +287,7 @@ class ProfileTest(base.SenlinTestCase):
         req = vorp.ProfileUpdateRequest(identity='Bogus', profile=req_body)
 
         ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_update2,
+                               self.eng.profile_update,
                                self.ctx, req.obj_to_primitive())
 
         self.assertEqual(exc.ResourceNotFound, ex.exc_info[0])
@@ -492,8 +296,8 @@ class ProfileTest(base.SenlinTestCase):
         mock_find.assert_called_once_with(self.ctx, 'Bogus')
 
     @mock.patch.object(pb.Profile, 'load')
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_update2_no_change(self, mock_find, mock_load):
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_update_no_change(self, mock_find, mock_load):
         x_obj = mock.Mock()
         mock_find.return_value = x_obj
         x_profile = mock.Mock()
@@ -505,7 +309,7 @@ class ProfileTest(base.SenlinTestCase):
         req = vorp.ProfileUpdateRequest(identity='PID', profile=req_body)
 
         ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_update2,
+                               self.eng.profile_update,
                                self.ctx, req.obj_to_primitive())
 
         self.assertEqual(exc.BadRequest, ex.exc_info[0])
@@ -517,36 +321,29 @@ class ProfileTest(base.SenlinTestCase):
         self.assertEqual(0, x_profile.store.call_count)
         self.assertEqual('OLD_NAME', x_profile.name)
 
-    @mock.patch.object(db_api, 'cluster_remove_dependents')
-    @mock.patch.object(pb.Profile, 'delete')
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_delete2(self, mock_find, mock_delete, mock_remove):
+    @mock.patch.object(fakes.TestProfile, 'delete')
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_delete(self, mock_find, mock_delete):
         self._setup_fakes()
-        spec = self.spec
-        spec['type'] = 'container.dockerinc.docker'
-        spec['properties']['host_cluster'] = 'FAKE_CLUSTER'
-        x_obj = mock.Mock(id='PROFILE_ID')
-        x_obj.spec = spec
+        x_obj = mock.Mock(id='PROFILE_ID', type='TestProfile-1.0')
         mock_find.return_value = x_obj
         mock_delete.return_value = None
 
         req = vorp.ProfileDeleteRequest(identity='PROFILE_ID')
-        result = self.eng.profile_delete2(self.ctx, req.obj_to_primitive())
+        result = self.eng.profile_delete(self.ctx, req.obj_to_primitive())
 
         self.assertIsNone(result)
         mock_find.assert_called_once_with(self.ctx, 'PROFILE_ID')
         mock_delete.assert_called_once_with(self.ctx, 'PROFILE_ID')
-        mock_remove.assert_called_once_with(self.ctx, 'FAKE_CLUSTER',
-                                            'PROFILE_ID')
 
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_delete2_not_found(self, mock_find):
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_delete_not_found(self, mock_find):
         mock_find.side_effect = exc.ResourceNotFound(type='profile',
                                                      id='Bogus')
 
         req = vorp.ProfileDeleteRequest(identity='Bogus')
         ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_delete2, self.ctx,
+                               self.eng.profile_delete, self.ctx,
                                req.obj_to_primitive())
 
         self.assertEqual(exc.ResourceNotFound, ex.exc_info[0])
@@ -555,16 +352,17 @@ class ProfileTest(base.SenlinTestCase):
         mock_find.assert_called_once_with(self.ctx, 'Bogus')
 
     @mock.patch.object(pb.Profile, 'delete')
-    @mock.patch.object(service.EngineService, 'profile_find')
-    def test_profile_delete2_profile_in_use(self, mock_find, mock_delete):
-        x_obj = mock.Mock(id='PROFILE_ID')
+    @mock.patch.object(po.Profile, 'find')
+    def test_profile_delete_profile_in_use(self, mock_find, mock_delete):
+        self._setup_fakes()
+        x_obj = mock.Mock(id='PROFILE_ID', type='TestProfile-1.0')
         mock_find.return_value = x_obj
         err = exc.EResourceBusy(type='profile', id='PROFILE_ID')
         mock_delete.side_effect = err
 
         req = vorp.ProfileDeleteRequest(identity='PROFILE_ID')
         ex = self.assertRaises(rpc.ExpectedException,
-                               self.eng.profile_delete2,
+                               self.eng.profile_delete,
                                self.ctx, req.obj_to_primitive())
 
         self.assertEqual(exc.ResourceInUse, ex.exc_info[0])

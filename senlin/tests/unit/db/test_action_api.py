@@ -101,9 +101,11 @@ class DBAPIActionTest(base.SenlinTestCase):
         action = _create_action(self.ctx)
         new_ctx = utils.dummy_context(project='another-project', is_admin=True)
         retobj = db_api.action_get(new_ctx, action.id, project_safe=True)
+        self.assertIsNone(retobj)
+        retobj = db_api.action_get(new_ctx, action.id, project_safe=False)
         self.assertIsNotNone(retobj)
 
-    def test_action_acquire_1st_ready(self):
+    def test_action_acquire_random_ready(self):
         specs = [
             {'name': 'A01', 'status': 'INIT'},
             {'name': 'A02', 'status': 'READY', 'owner': 'worker1'},
@@ -116,8 +118,9 @@ class DBAPIActionTest(base.SenlinTestCase):
 
         worker = 'worker2'
         timestamp = time.time()
-        action = db_api.action_acquire_1st_ready(self.ctx, worker, timestamp)
-        self.assertEqual('A04', action.name)
+        action = db_api.action_acquire_random_ready(self.ctx, worker,
+                                                    timestamp)
+        self.assertIn(action.name, ('A02', 'A04'))
         self.assertEqual('worker2', action.owner)
         self.assertEqual(consts.ACTION_RUNNING, action.status)
         self.assertEqual(timestamp, action.start_time)

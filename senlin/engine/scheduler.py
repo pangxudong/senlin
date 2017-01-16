@@ -117,8 +117,8 @@ class ThreadGroupManager(object):
         batch_interval = cfg.CONF.batch_interval
         while True:
             timestamp = wallclock()
-            action = ao.Action.acquire_1st_ready(self.db_session, worker_id,
-                                                 timestamp)
+            action = ao.Action.acquire_random_ready(self.db_session, worker_id,
+                                                    timestamp)
             if action:
                 if batch_size > 0 and 'NODE' in action.action:
                     if actions_launched < batch_size:
@@ -141,17 +141,20 @@ class ThreadGroupManager(object):
 
     def cancel_action(self, action_id):
         '''Cancel an action execution progress.'''
-        action = action_mod.Action.load(self.db_session, action_id)
+        action = action_mod.Action.load(self.db_session, action_id,
+                                        project_safe=False)
         action.signal(action.SIG_CANCEL)
 
     def suspend_action(self, action_id):
         '''Suspend an action execution progress.'''
-        action = action_mod.Action.load(self.db_session, action_id)
+        action = action_mod.Action.load(self.db_session, action_id,
+                                        project_safe=False)
         action.signal(action.SIG_SUSPEND)
 
     def resume_action(self, action_id):
         '''Resume an action execution progress.'''
-        action = action_mod.Action.load(self.db_session, action_id)
+        action = action_mod.Action.load(self.db_session, action_id,
+                                        project_safe=False)
         action.signal(action.SIG_RESUME)
 
     def add_timer(self, interval, func, *args, **kwargs):

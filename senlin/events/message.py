@@ -11,28 +11,18 @@
 # under the License.
 
 from oslo_config import cfg
-from oslo_utils import reflection
 
 from senlin.common import utils
+from senlin.events import base
 from senlin.objects import notification as nobj
 
 
-class MessageEvent(object):
+class MessageEvent(base.EventBackend):
     """Message driver for event dumping"""
-
-    @staticmethod
-    def _check_entity(e):
-        e_type = reflection.get_class_name(e, fully_qualified=False)
-        return e_type.upper()
-
-    @staticmethod
-    def _get_action_name(action):
-        name = action.split('_', 1)[1]
-        return name.lower()
 
     @classmethod
     def _notify_cluster_action(cls, ctx, level, cluster, action, **kwargs):
-        action_name = cls._get_action_name(action.action)
+        action_name = cls._get_action_name(action)
         priority = utils.level_from_number(level).lower()
         publisher = nobj.NotificationPublisher(
             host=cfg.CONF.host, binary='senlin-engine')
@@ -48,7 +38,7 @@ class MessageEvent(object):
 
     @classmethod
     def _notify_node_action(cls, ctx, level, node, action, **kwargs):
-        action_name = cls._get_action_name(action.action)
+        action_name = cls._get_action_name(action)
         priority = utils.level_from_number(level).lower()
         publisher = nobj.NotificationPublisher(
             host=cfg.CONF.host, binary='senlin-engine')
@@ -63,17 +53,15 @@ class MessageEvent(object):
         notification.emit(ctx)
 
     @classmethod
-    def dump(cls, ctx, level, entity, action, **kwargs):
+    def dump(cls, level, action, **kwargs):
         """Dump the provided event into message queue.
 
-        :param ctx: The request context.
         :param level: An integer as defined by python logging module.
-        :param entity: A cluster or a node object.
         :param action: An action object for the current operation.
-        :param phase: The current phase of the operation.
         :param dict kwargs: Other keyword arguments for the operation.
         """
-        # TODO(Qiming): Add filter about levels that should not be logged
+        ctx = action.context
+        entity = action.entity
         etype = cls._check_entity(entity)
         if etype == 'CLUSTER':
             cls._notify_cluster_action(ctx, level, entity, action, **kwargs)

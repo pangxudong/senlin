@@ -10,56 +10,92 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from oslo_config import cfg
 from oslo_log import log as logging
+from oslo_utils import timeutils
+import six
+from stevedore import named
 
-from senlin.common.i18n import _LC, _LE, _LW, _LI
-from senlin.events import database as DB
+from senlin.common import consts
+from senlin.common.i18n import _LE, _LI, _LW
 
 LOG = logging.getLogger(__name__)
+FMT = '%(name)s [%(id)s] %(action)s - %(phase)s: %(reason)s'
+dispatchers = None
 
 
-def critical(context, entity, action, status=None, status_reason=None,
-             timestamp=None):
-    DB.DBEvent.dump(context, logging.CRITICAL, entity, action,
-                    status=status, reason=status_reason, timestamp=timestamp)
-    LOG.critical(_LC('%(name)s [%(id)s] - %(status)s: %(reason)s'),
-                 {'name': entity.name, 'id': entity.id[:8],
-                  'status': status, 'reason': status_reason})
+def load_dispatcher():
+    """Load dispatchers."""
+    global dispatchers
+
+    LOG.debug("Loading dispatchers")
+    dispatchers = named.NamedExtensionManager(
+        namespace="senlin.dispatchers",
+        names=cfg.CONF.event_dispatchers,
+        invoke_on_load=True,
+        propagate_map_exceptions=True)
+    if not list(dispatchers):
+        LOG.warning(_LW("No dispatchers configured for 'senlin.dispatchers'"))
+    else:
+        LOG.info(_LI("Loaded dispatchers: %s"), dispatchers.names())
 
 
-def error(context, entity, action, status=None, status_reason=None,
-          timestamp=None):
-    DB.DBEvent.dump(context, logging.ERROR, entity, action,
-                    status=status, reason=status_reason, timestamp=timestamp)
-    msg = _LE('%(name)s [%(id)s] %(action)s - %(status)s: %(reason)s')
-    LOG.error(msg,
-              {'name': entity.name, 'id': entity.id[:8], 'action': action,
-               'status': status, 'reason': status_reason})
+def _event_data(action, phase=None, reason=None):
+    action_name = action.action
+    if action_name in [consts.NODE_OPERATION, consts.CLUSTER_OPERATION]:
+        action_name = action.inputs.get('operation', action_name)
+    return dict(name=action.entity.name,
+                id=action.entity.id[:8],
+                action=action_name,
+                phase=phase,
+                reason=reason)
 
 
-def warning(context, entity, action, status=None, status_reason=None,
-            timestamp=None):
-    DB.DBEvent.dump(context, logging.WARNING, entity, action,
-                    status=status, reason=status_reason, timestamp=timestamp)
-    msg = _LW('%(name)s [%(id)s] %(action)s - %(status)s: %(reason)s')
-    LOG.warning(msg,
-                {'name': entity.name, 'id': entity.id[:8], 'action': action,
-                 'status': status, 'reason': status_reason})
+def _dump(level, action, phase, reason, timestamp):
+    global dispatchers
+
+    if timestamp is None:
+        timestamp = timeutils.utcnow(True)
+
+    # We check the logging level threshold only when debug is False
+    if cfg.CONF.debug is False:
+        watermark = cfg.CONF.dispatchers.priority.upper()
+        bound = consts.EVENT_LEVELS.get(watermark, logging.INFO)
+        if level < bound:
+            return
+
+    if cfg.CONF.dispatchers.exclude_derived_actions:
+        if action.cause == consts.CAUSE_DERIVED:
+            return
+
+    try:
+        dispatchers.map_method("dump", level, action,
+                               phase=phase, reason=reason, timestamp=timestamp)
+    except Exception as ex:
+        LOG.exception(_LE("Dispatcher failed to handle the event: %s"),
+                      six.text_type(ex))
 
 
-def info(context, entity, action, status=None, status_reason=None,
-         timestamp=None):
-    DB.DBEvent.dump(context, logging.INFO, entity, action,
-                    status=status, reason=status_reason, timestamp=timestamp)
-    LOG.info(_LI('%(name)s [%(id)s] %(action)s - %(status)s: %(reason)s'),
-             {'name': entity.name, 'id': entity.id[:8], 'action': action,
-              'status': status, 'reason': status_reason})
+def critical(action, phase=None, reason=None, timestamp=None):
+    _dump(logging.CRITICAL, action, phase, reason, timestamp)
+    LOG.critical(FMT, _event_data(action, phase, reason))
 
 
-def debug(context, entity, action, status=None, status_reason=None,
-          timestamp=None):
-    DB.DBEvent.dump(context, logging.DEBUG, entity, action,
-                    status=status, reason=status_reason, timestamp=timestamp)
-    LOG.debug('%(name)s [%(id)s] %(action)s - %(status)s: %(reason)s',
-              {'name': entity.name, 'id': entity.id[:8], 'action': action,
-               'status': status, 'reason': status_reason})
+def error(action, phase=None, reason=None, timestamp=None):
+    _dump(logging.ERROR, action, phase, reason, timestamp)
+    LOG.error(FMT, _event_data(action, phase, reason))
+
+
+def warning(action, phase=None, reason=None, timestamp=None):
+    _dump(logging.WARNING, action, phase, reason, timestamp)
+    LOG.warning(FMT, _event_data(action, phase, reason))
+
+
+def info(action, phase=None, reason=None, timestamp=None):
+    _dump(logging.INFO, action, phase, reason, timestamp)
+    LOG.info(FMT, _event_data(action, phase, reason))
+
+
+def debug(action, phase=None, reason=None, timestamp=None):
+    _dump(logging.DEBUG, action, phase, reason, timestamp)
+    LOG.debug(FMT, _event_data(action, phase, reason))

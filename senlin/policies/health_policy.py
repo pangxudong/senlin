@@ -12,6 +12,7 @@
 
 from senlin.common import constraints
 from senlin.common import consts
+from senlin.common import exception as exc
 from senlin.common.i18n import _
 from senlin.common import scaleutils
 from senlin.common import schema
@@ -25,7 +26,11 @@ class HealthPolicy(base.Policy):
     """Policy for health management of a cluster."""
 
     VERSION = '1.0'
-
+    VERSIONS = {
+        '1.0': [
+            {'status': consts.EXPERIMENTAL, 'since': '2017.02'}
+        ]
+    }
     PRIORITY = 600
 
     TARGET = [
@@ -165,6 +170,18 @@ class HealthPolicy(base.Policy):
         recover_settings = self.properties[self.RECOVERY]
         self.recover_actions = recover_settings[self.RECOVERY_ACTIONS]
         self.fencing_types = recover_settings[self.RECOVERY_FENCING]
+
+    def validate(self, context, validate_props=False):
+        super(HealthPolicy, self).validate(context,
+                                           validate_props=validate_props)
+
+        if len(self.recover_actions) > 1:
+            message = _("Only one '%s' is supported for now."
+                        ) % self.RECOVERY_ACTIONS
+            raise exc.ESchema(message=message)
+
+        # TODO(Qiming): Add detection of duplicated action names when
+        # support to list of actions is implemented.
 
     def attach(self, cluster):
         """"Hook for policy attach.

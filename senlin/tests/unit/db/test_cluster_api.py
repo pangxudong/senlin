@@ -80,6 +80,9 @@ class DBAPIClusterTest(base.SenlinTestCase):
                                         is_admin=True)
         ret_cluster = db_api.cluster_get(admin_ctx, cluster.id,
                                          project_safe=True)
+        self.assertIsNone(ret_cluster)
+        ret_cluster = db_api.cluster_get(admin_ctx, cluster.id,
+                                         project_safe=False)
         self.assertEqual(cluster.id, ret_cluster.id)
         self.assertEqual('db_test_cluster_name', ret_cluster.name)
 
@@ -472,32 +475,28 @@ class DBAPIClusterTest(base.SenlinTestCase):
         profile_id = 'profile1'
         db_api.cluster_add_dependents(self.ctx, cluster.id, profile_id)
         res = db_api.cluster_get(self.ctx, cluster.id)
-        self.assertEqual(['profile1'], res.dependents['profile'])
-        deps = {'containers': ['container1']}
+        self.assertEqual(['profile1'], res.dependents['profiles'])
+        deps = {}
         cluster = shared.create_cluster(self.ctx, self.profile,
                                         dependents=deps)
         db_api.cluster_add_dependents(self.ctx, cluster.id, profile_id)
         res = db_api.cluster_get(self.ctx, cluster.id)
-        deps = {'profile': ['profile1'],
-                'containers': ['container1']}
+        deps = {'profiles': ['profile1']}
         self.assertEqual(deps, res.dependents)
         db_api.cluster_add_dependents(self.ctx, cluster.id, 'profile2')
         res = db_api.cluster_get(self.ctx, cluster.id)
-        deps = {'profile': ['profile1', 'profile2'],
-                'containers': ['container1']}
+        deps = {'profiles': ['profile1', 'profile2']}
         self.assertEqual(deps, res.dependents)
 
     def test_cluster_remove_dependents(self):
-        deps = {'containers': ['container1'],
-                'profile': ['profile1', 'profile2']}
+        deps = {'profiles': ['profile1', 'profile2']}
         cluster = shared.create_cluster(self.ctx, self.profile,
                                         dependents=deps)
         db_api.cluster_remove_dependents(self.ctx, cluster.id, 'profile1')
         res = db_api.cluster_get(self.ctx, cluster.id)
-        deps = {'containers': ['container1'], 'profile': ['profile2']}
+        deps = {'profiles': ['profile2']}
         self.assertEqual(deps, res.dependents)
-
         db_api.cluster_remove_dependents(self.ctx, cluster.id, 'profile2')
         res = db_api.cluster_get(self.ctx, cluster.id)
-        deps = {'containers': ['container1']}
+        deps = {}
         self.assertEqual(deps, res.dependents)

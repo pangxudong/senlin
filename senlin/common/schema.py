@@ -18,7 +18,7 @@ from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import strutils
 
-from senlin.common import exception
+from senlin.common import exception as exc
 from senlin.common.i18n import _
 
 LOG = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class SchemaBase(collections.Mapping):
             if type(self) not in (List, Map, Operation):
                 msg = _('Schema valid only for List or Map, not %s'
                         ) % self[self.TYPE]
-                raise exception.InvalidSchemaError(message=msg)
+                raise exc.ESchema(message=msg)
 
         if self[self.TYPE] == self.LIST:
             self.schema = AnyIndexDict(schema)
@@ -95,17 +95,17 @@ class SchemaBase(collections.Mapping):
         try:
             # NOTE: this is the subclass's version of 'validate'
             self.validate(self.default, context)
-        except (ValueError, TypeError) as exc:
-            raise exception.InvalidSchemaError(
-                message=_('Invalid default %(default)s: %(exc)s') %
-                dict(default=self.default, exc=exc))
+        except (ValueError, TypeError) as ex:
+            msg = _('Invalid default %(default)s: %(exc)s'
+                    ) % dict(default=self.default, exc=ex)
+            raise exc.ESchema(message=msg)
 
     def validate_constraints(self, value, schema=None, context=None):
         try:
             for constraint in self.constraints:
                 constraint.validate(value, schema=schema, context=context)
         except ValueError as ex:
-            raise exception.SpecValidationFailed(message=six.text_type(ex))
+            raise exc.ESchema(message=six.text_type(ex))
 
     def _validate_version(self, key, version):
         if self.min_version and self.min_version > version:
@@ -113,14 +113,14 @@ class SchemaBase(collections.Mapping):
                     'spec version %(version)s.'
                     ) % {'key': key, 'min': self.min_version,
                          'version': version}
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
         if self.max_version:
             if version > self.max_version:
                 msg = _('%(key)s (max_version=%(max)s) is not supported '
                         'by spec version %(version)s.'
                         ) % {'version': version, 'max': self.max_version,
                              'key': key}
-                raise exception.SpecValidationFailed(message=msg)
+                raise exc.ESchema(message=msg)
             else:
                 msg = _('Warning: %(key)s will be deprecated after version '
                         '%(version)s!') % {'key': key,
@@ -203,7 +203,7 @@ class Boolean(PropertySchema):
             return strutils.bool_from_string(str(value), strict=True)
         except ValueError:
             msg = _("The value '%s' is not a valid Boolean") % value
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
     def resolve(self, value):
         return self.to_schema_type(value)
@@ -229,7 +229,7 @@ class Integer(PropertySchema):
             num = int(value)
         except ValueError:
             msg = _("The value '%s' is not a valid Integer") % value
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
         return num
 
@@ -262,7 +262,7 @@ class String(PropertySchema):
     def validate(self, value, context=None):
         if not isinstance(value, six.string_types):
             msg = _("The value '%s' is not a valid string.") % value
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
         self.resolve(value)
         self.validate_constraints(value, schema=self, context=context)
@@ -286,7 +286,7 @@ class Number(PropertySchema):
                 return float(value)
             except ValueError:
                 msg = _("The value '%s' is not a valid number.") % value
-                raise exception.SpecValidationFailed(message=msg)
+                raise exc.ESchema(message=msg)
 
     def resolve(self, value):
         return self.to_schema_type(value)
@@ -321,7 +321,7 @@ class List(PropertySchema):
         # if not isinstance(value, collections.Mapping):
         if not isinstance(value, collections.Sequence):
             msg = _("'%s' is not a List") % value
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
         for v in value:
             self.schema['*'].validate(v, context=context)
@@ -356,7 +356,7 @@ class Map(PropertySchema):
 
         if not isinstance(self.default, collections.Mapping):
             msg = _("'%s' is not a Map") % self.default
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
         return self.default
 
@@ -366,18 +366,18 @@ class Map(PropertySchema):
                 value = jsonutils.loads(value)
             except (TypeError, ValueError):
                 msg = _("'%s' is not a Map") % value
-                raise exception.SpecValidationFailed(message=msg)
+                raise exc.ESchema(message=msg)
 
         if not isinstance(value, collections.Mapping):
             msg = _("'%s' is not a Map") % value
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
         return dict(self._get_children(value.items(), context))
 
     def validate(self, value, context=None):
         if not isinstance(value, collections.Mapping):
             msg = _("'%s' is not a Map") % value
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
         for key, child in self.schema.items():
             item_value = value.get(key)
@@ -390,6 +390,29 @@ class StringParam(SchemaBase):
         if key == self.TYPE:
             return self.STRING
         return super(StringParam, self).__getitem__(key)
+
+    def validate(self, value):
+        if not isinstance(value, six.string_types):
+            raise TypeError("value is not a string")
+
+        self.validate_constraints(value)
+
+
+class IntegerParam(SchemaBase):
+
+    def __getitem__(self, key):
+        if key == self.TYPE:
+            return self.INTEGER
+        return super(IntegerParam, self).__getitem__(key)
+
+    def validate(self, value):
+        try:
+            int(value)
+        except ValueError:
+            msg = _("The value '%s' is not a valid Integer") % value
+            raise ValueError(msg)
+
+        self.validate_constraints(value)
 
 
 class Operation(SchemaBase):
@@ -408,6 +431,25 @@ class Operation(SchemaBase):
             if self.schema is None:
                 return {}
             return dict((n, dict(s)) for n, s in self.schema.items())
+
+    def validate(self, data, version=None):
+        for k in data:
+            if k not in self.schema:
+                msg = _("Unrecognizable parameter '%s'") % k
+                raise exc.ESchema(message=msg)
+
+        for (k, s) in self.schema.items():
+            try:
+                if k in data:
+                    s.validate(data[k])
+                elif s.required:
+                    msg = _("Required parameter '%s' not provided") % k
+                    raise exc.ESchema(message=msg)
+
+                if version:
+                    s._validate_version(k, version)
+            except (TypeError, ValueError) as ex:
+                raise exc.ESchema(message=six.text_type(ex))
 
 
 class Spec(collections.Mapping):
@@ -429,18 +471,16 @@ class Spec(collections.Mapping):
                 if self._version:
                     self._schema[k]._validate_version(k, self._version)
             except (TypeError, ValueError) as err:
-                raise exception.SpecValidationFailed(
-                    message=six.text_type(err))
+                raise exc.ESchema(message=six.text_type(err))
 
         for key in self._data:
             if key not in self._schema:
                 msg = _("Unrecognizable spec item '%s'") % key
-                raise exception.SpecValidationFailed(message=msg)
+                raise exc.ESchema(message=msg)
 
     def resolve_value(self, key):
         if key not in self:
-            raise exception.SpecValidationFailed(
-                message="Invalid spec item: %s" % key)
+            raise exc.ESchema(message="Invalid spec item: %s" % key)
 
         schema_item = self._schema[key]
         if key in self._data:
@@ -450,7 +490,7 @@ class Spec(collections.Mapping):
             return schema_item.get_default()
         elif schema_item.required:
             msg = _("Required spec item '%s' not provided") % key
-            raise exception.SpecValidationFailed(message=msg)
+            raise exc.ESchema(message=msg)
 
     def __getitem__(self, key):
         '''Lazy evaluation for spec items.'''
@@ -473,14 +513,14 @@ class Spec(collections.Mapping):
 def get_spec_version(spec):
     if not isinstance(spec, dict):
         msg = _('The provided spec is not a map.')
-        raise exception.SpecValidationFailed(message=msg)
+        raise exc.ESchema(message=msg)
 
     if 'type' not in spec:
         msg = _("The 'type' key is missing from the provided spec map.")
-        raise exception.SpecValidationFailed(message=msg)
+        raise exc.ESchema(message=msg)
 
     if 'version' not in spec:
         msg = _("The 'version' key is missing from the provided spec map.")
-        raise exception.SpecValidationFailed(message=msg)
+        raise exc.ESchema(message=msg)
 
     return (spec['type'], six.text_type(spec['version']))

@@ -16,6 +16,7 @@ Webhook endpoint for Senlin v1 ReST API.
 
 from senlin.api.common import util
 from senlin.api.common import wsgi
+from senlin.objects import base as obj_base
 
 
 class WebhookController(wsgi.Controller):
@@ -25,13 +26,16 @@ class WebhookController(wsgi.Controller):
 
     @util.policy_enforce
     def trigger(self, req, webhook_id, body=None):
-        params = None
         if body is None:
-            body = {}
-        if body and 'params' in body:
-            params = body.get('params')
+            body = {'params': None}
 
-        res = self.rpc_client.webhook_trigger(req.context, webhook_id, params)
+        body = obj_base.SenlinObject.normalize_req(
+            'WebhookTriggerRequestBody', body)
+        obj = util.parse_request(
+            'WebhookTriggerRequest', req, {'identity': webhook_id,
+                                           'body': body})
+
+        res = self.rpc_client.call(req.context, 'webhook_trigger', obj)
         location = {'location': '/actions/%s' % res['action']}
         res.update(location)
         return res

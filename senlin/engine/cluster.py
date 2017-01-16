@@ -16,8 +16,7 @@ from oslo_utils import timeutils
 
 from senlin.common import consts
 from senlin.common import exception
-from senlin.common.i18n import _
-from senlin.common.i18n import _LE
+from senlin.common.i18n import _, _LE
 from senlin.common import utils
 from senlin.engine import cluster_policy as cpm
 from senlin.engine import node as node_mod
@@ -306,6 +305,16 @@ class Cluster(object):
         '''
         self.set_status(context, consts.CS_RECOVERING,
                         _('Recovery in progress'))
+        return True
+
+    def do_operation(self, context, **kwargs):
+        """Additional logic at the beginning of cluster recovering process.
+
+        Set cluster status to OPERATING.
+        """
+        operation = kwargs.get("operation", "unknown")
+        self.set_status(context, consts.CS_OPERATING,
+                        _("Operation %s in progress") % operation)
         return True
 
     def attach_policy(self, ctx, policy_id, values):

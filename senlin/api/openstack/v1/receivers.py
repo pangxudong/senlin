@@ -14,17 +14,12 @@
 Webhook endpoint for Senlin v1 ReST API.
 """
 
-import jsonschema
-import six
 from webob import exc
 
 from senlin.api.common import util
 from senlin.api.common import wsgi
 from senlin.common import consts
 from senlin.common.i18n import _
-from senlin.common import utils
-from senlin.objects import base as obj_base
-from senlin.objects.requests import receivers as vorr
 
 
 class ReceiverController(wsgi.Controller):
@@ -38,6 +33,7 @@ class ReceiverController(wsgi.Controller):
             consts.RECEIVER_NAME: 'mixed',
             consts.RECEIVER_TYPE: 'mixed',
             consts.RECEIVER_CLUSTER_ID: 'mixed',
+            consts.RECEIVER_USER_ID: 'mixed',
             consts.RECEIVER_ACTION: 'mixed',
             consts.PARAM_LIMIT: 'single',
             consts.PARAM_MARKER: 'single',
@@ -50,61 +46,45 @@ class ReceiverController(wsgi.Controller):
 
         params = util.get_allowed_params(req.params, whitelist)
 
-        project_safe = not utils.parse_bool_param(
+        project_safe = not util.parse_bool_param(
             consts.PARAM_GLOBAL_PROJECT,
             params.pop(consts.PARAM_GLOBAL_PROJECT, False))
         params['project_safe'] = project_safe
 
-        try:
-            norm_req = obj_base.SenlinObject.normalize_req(
-                'ReceiverListRequest', params)
-            obj = vorr.ReceiverListRequest.obj_from_primitive(norm_req)
-            jsonschema.validate(norm_req, obj.to_json_schema())
-        except (ValueError) as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex))
-
-        receivers = self.rpc_client.call2(req.context, 'receiver_list2', obj)
+        obj = util.parse_request('ReceiverListRequest', req, params)
+        receivers = self.rpc_client.call(req.context, 'receiver_list', obj)
 
         return {'receivers': receivers}
 
     @util.policy_enforce
     def create(self, req, body):
-        try:
-            norm_req = obj_base.SenlinObject.normalize_req(
-                'ReceiverCreateRequest', body, 'receiver')
-            obj = vorr.ReceiverCreateRequest.obj_from_primitive(norm_req)
-            jsonschema.validate(norm_req, obj.to_json_schema())
-        except (ValueError) as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex))
-        except jsonschema.exceptions.ValidationError as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex.message))
 
-        result = self.rpc_client.call2(req.context, 'receiver_create2',
-                                       obj.receiver)
+        obj = util.parse_request(
+            'ReceiverCreateRequest', req, body, 'receiver')
+        result = self.rpc_client.call(req.context, 'receiver_create',
+                                      obj.receiver)
 
         return {'receiver': result}
 
     @util.policy_enforce
     def get(self, req, receiver_id):
-        try:
-            norm_req = obj_base.SenlinObject.normalize_req(
-                'ReceiverGetRequest', {'identity': receiver_id})
-            obj = vorr.ReceiverGetRequest.obj_from_primitive(norm_req)
-            jsonschema.validate(norm_req, obj.to_json_schema())
-        except (ValueError) as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex))
-        except jsonschema.exceptions.ValidationError as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex.message))
-
-        receiver = self.rpc_client.call2(req.context, 'receiver_get2', obj)
+        obj = util.parse_request(
+            'ReceiverGetRequest', req, {'identity': receiver_id})
+        receiver = self.rpc_client.call(req.context, 'receiver_get', obj)
         return {'receiver': receiver}
 
     @util.policy_enforce
     def delete(self, req, receiver_id):
-        self.rpc_client.receiver_delete(req.context, receiver_id, cast=False)
+
+        obj = util.parse_request(
+            'ReceiverDeleteRequest', req, {'identity': receiver_id})
+        self.rpc_client.call(req.context, 'receiver_delete', obj)
         raise exc.HTTPNoContent()
 
     @util.policy_enforce
     def notify(self, req, receiver_id, body=None):
-        self.rpc_client.receiver_notify(req.context, receiver_id, body)
+
+        obj = util.parse_request(
+            'ReceiverNotifyRequest', req, {'identity': receiver_id})
+        self.rpc_client.call(req.context, 'receiver_notify', obj)
         raise exc.HTTPNoContent()

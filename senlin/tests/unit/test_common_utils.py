@@ -25,89 +25,20 @@ from senlin.objects import service as service_obj
 from senlin.tests.unit.common import base
 
 
-class TestParameterParsing(base.SenlinTestCase):
-    def test_parse_bool(self):
-        name = 'param'
-        for value in ('True', 'true', 'TRUE', True):
-            self.assertTrue(utils.parse_bool_param(name, value))
-        for value in ('False', 'false', 'FALSE', False):
-            self.assertFalse(utils.parse_bool_param(name, value))
-        for value in ('foo', 't', 'f', 'yes', 'no', 'y', 'n', '1', '0', None):
-            self.assertRaises(exception.InvalidParameter,
-                              utils.parse_bool_param, name, value)
+class TestGetPositiveInt(base.SenlinTestCase):
 
-    def test_parse_int(self):
-        name = 'param'
-        cases = {0: 0, 2: 2, '0': 0, '2': 2}
+    def test_get_positive_int(self):
+        cases = {1: 1, 2: 2, '1': 1, '2': 2}
         for value, expected in cases.items():
-            actual = utils.parse_int_param(name, value)
+            res, actual = utils.get_positive_int(value)
+            self.assertTrue(res)
             self.assertEqual(expected, actual)
 
-        # A None should be returned directly
-        actual = utils.parse_int_param(name, None)
-        self.assertIsNone(actual)
-
-        for value in (2, '2'):
-            self.assertTrue(utils.parse_int_param(name, value,
-                                                  allow_zero=False))
-        for value in (0, '0'):
-            self.assertRaises(exception.InvalidParameter,
-                              utils.parse_int_param, name, value,
-                              allow_zero=False)
-        for value in (-1, '-2'):
-            self.assertTrue(utils.parse_int_param(name, value,
-                                                  allow_negative=True))
-        for value in (-1, '-2'):
-            self.assertRaises(exception.InvalidParameter,
-                              utils.parse_int_param, name, value)
-
-        for value in (1, 6):
-            self.assertRaises(exception.InvalidParameter,
-                              utils.parse_int_param, name, value,
-                              lower_limit=2, upper_limit=5)
-
-    def test_validate_sort_param(self):
-        whitelist = ['foo', 'bar', 'zoo']
-        # None case
-        actual = utils.validate_sort_param(None, whitelist)
-        self.assertIsNone(actual)
-
-        # single good key
-        actual = utils.validate_sort_param('foo', whitelist)
-        self.assertIsNone(actual)
-
-        # multiple keys
-        actual = utils.validate_sort_param('foo,bar', whitelist)
-        self.assertIsNone(actual)
-
-        # with dirs
-        value = 'foo:asc,bar,zoo:desc'
-        actual = utils.validate_sort_param(value, whitelist)
-        self.assertIsNone(actual)
-
-    def test_validate_sort_param_key_missing(self):
-        whitelist = ['foo', 'bar', 'zoo']
-        ex = self.assertRaises(exception.InvalidParameter,
-                               utils.validate_sort_param,
-                               ':asc', whitelist)
-        self.assertEqual("Invalid value '' specified for 'sort key'",
-                         six.text_type(ex))
-
-    def test_validate_sort_param_invalid_key(self):
-        whitelist = ['foo', 'bar', 'zoo']
-        ex = self.assertRaises(exception.InvalidParameter,
-                               utils.validate_sort_param,
-                               'cool', whitelist)
-        self.assertEqual("Invalid value 'cool' specified for 'sort key'",
-                         six.text_type(ex))
-
-    def test_validate_sort_param_invalid_dir(self):
-        whitelist = ['foo', 'bar', 'zoo']
-        ex = self.assertRaises(exception.InvalidParameter,
-                               utils.validate_sort_param,
-                               'bar:inc', whitelist)
-        self.assertEqual("Invalid value 'inc' specified for 'sort dir'",
-                         six.text_type(ex))
+        bad_values = ['foo', {}, [], -1, 1.5, 0.2, None]
+        for value in bad_values:
+            res, actual = utils.get_positive_int(value)
+            self.assertFalse(res)
+            self.assertEqual(0, actual)
 
 
 class Response(object):

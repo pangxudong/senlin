@@ -10,6 +10,7 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from senlin.api.common import util
 from senlin.api.common import wsgi
 from senlin.common import context
 from senlin.common import exception
@@ -23,15 +24,18 @@ class TrustMiddleware(wsgi.Middleware):
     The extracted information is filled into the request context.
     Senlin engine will use this information for access control.
     """
-    def _get_trust(self, ctx):
+    def _get_trust(self, req):
         """List trusts with current user as the trustor.
 
-        :param ctx: The requesting context.
+        :param req: The WSGI request object.
         :return: ID of the trust or exception of InternalError.
         """
         rpcc = rpc.EngineClient()
 
-        res = rpcc.credential_get(ctx)
+        ctx = req.context
+        params = {'user': ctx.user, 'project': ctx.project}
+        obj = util.parse_request('CredentialGetRequest', req, params)
+        res = rpcc.call(ctx, 'credential_get', obj)
         if res:
             trust_id = res.get('trust', None)
             if trust_id:
@@ -58,10 +62,13 @@ class TrustMiddleware(wsgi.Middleware):
             trust = kc.trust_create(ctx.user, admin_id, ctx.project, ctx.roles)
 
         # If credential not exists, create it, otherwise update it.
-        rpcc.credential_create(ctx, trust.id)
+        cred = {'openstack': {'trust': trust.id}}
+        params = {'cred': cred}
+        obj = util.parse_request('CredentialCreateRequest', req, params)
+        rpcc.call(ctx, 'credential_create', obj)
 
         return trust.id
 
     def process_request(self, req):
-        trust_id = self._get_trust(req.context)
+        trust_id = self._get_trust(req)
         req.context.trusts = trust_id

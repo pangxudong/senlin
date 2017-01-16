@@ -10,67 +10,54 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-from oslo_utils import reflection
 from oslo_utils import timeutils
 
+from senlin.common import consts
+from senlin.events import base
 from senlin.objects import event as eo
 
 
-class DBEvent(object):
+class DBEvent(base.EventBackend):
     """DB driver for event dumping"""
 
-    @staticmethod
-    def _check_entity(e):
-        e_type = reflection.get_class_name(e, fully_qualified=False)
-        e_type = e_type.upper()
-
-        if e_type == 'CLUSTER':
-            return (e.id, e.id, e.name, 'CLUSTER')
-        elif e_type == 'NODE':
-            return (e.id, e.cluster_id, e.name, 'NODE')
-        elif e_type == 'CLUSTERACTION':
-            return (e.target, e.target, e.cluster.name, 'CLUSTER')
-        elif e_type == 'NODEACTION':
-            return (e.target, e.node.cluster_id, e.node.name, 'NODE')
-        else:
-            return (e.target, '', '', '')
-
     @classmethod
-    def dump(cls, context, level, entity, action, status=None, reason=None,
-             **kwargs):
+    def dump(cls, level, action, **kwargs):
         """Create an event record into database.
 
-        :param context: The request context.
-        :param level: The log level which is an integer as defined in logging.
-        :param entity: The object in question.
+        :param level: An integer as defined by python logging module.
         :param action: The action that triggered this dump.
-        :param status: The status of the action or the object.
-        :param reason: The reason that led the object into its current status.
-        :param kwargs: Additional parameters such as ``timestamp`` or
-                       ``extra``.
+        :param dict kwargs: Additional parameters such as ``phase``,
+                            ``timestamp`` or ``extra``.
         """
-        status = status or entity.status
-        reason = reason or entity.status_reason
-        oid, cluster_id, oname, otype = cls._check_entity(entity)
-
+        ctx = action.context
+        entity = action.entity
+        status = kwargs.get('phase') or entity.status
+        reason = kwargs.get('reason') or entity.status_reason
+        otype = cls._check_entity(entity)
+        cluster_id = entity.id if otype == 'CLUSTER' else entity.cluster_id
         # use provided timestamp if any
         timestamp = kwargs.get('timestamp') or timeutils.utcnow(True)
         # use provided extra data if any
         extra = kwargs.get("extra") or {}
 
+        # Make a guess over the action name
+        action_name = action.action
+        if action_name in (consts.NODE_OPERATION, consts.CLUSTER_OPERATION):
+            action_name = action.inputs.get('operation', action_name)
+
         values = {
             'level': level,
             'timestamp': timestamp,
-            'oid': oid,
+            'oid': entity.id,
             'otype': otype,
-            'oname': oname,
+            'oname': entity.name,
             'cluster_id': cluster_id,
-            'user': context.user,
-            'project': context.project,
-            'action': action,
+            'user': ctx.user,
+            'project': ctx.project,
+            'action': action_name,
             'status': status,
             'status_reason': reason,
             'meta_data': extra,
         }
 
-        eo.Event.create(context, values)
+        eo.Event.create(ctx, values)

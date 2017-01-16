@@ -13,7 +13,7 @@
 import collections
 import six
 
-from senlin.common import exception
+from senlin.common import exception as exc
 from senlin.common.i18n import _
 
 
@@ -63,7 +63,7 @@ class AllowedValues(BaseConstraint):
         if (not isinstance(allowed_values, collections.Sequence) or
                 isinstance(allowed_values, six.string_types)):
             msg = _('AllowedValues must be a list or a string')
-            raise exception.InvalidSchemaError(message=msg)
+            raise exc.ESchema(message=msg)
 
         self.allowed = tuple(allowed_values)
 
@@ -73,8 +73,8 @@ class AllowedValues(BaseConstraint):
 
     def _error(self, value):
         values = ', '.join(str(v) for v in self.allowed)
-        return _('"%(value)s" must be one of the allowed values: '
-                 '%(allowed)s') % dict(value=value, allowed=values)
+        return _("'%(value)s' must be one of the allowed values: "
+                 "%(allowed)s") % dict(value=value, allowed=values)
 
     def _validate(self, value, schema=None, context=None):
         if isinstance(value, list):

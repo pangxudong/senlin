@@ -41,7 +41,7 @@ engine_opts = [
                help=_('Seconds between running periodic tasks.')),
     cfg.IntOpt('periodic_interval_max',
                default=120,
-               help='Seconds between periodic tasks to be called'),
+               help='Maximum seconds between periodic tasks to be called'),
     cfg.IntOpt('periodic_fuzzy_delay',
                default=10,
                help='Range of seconds to randomly delay when starting the'
@@ -86,15 +86,10 @@ engine_opts = [
                 default=False,
                 help=_('Flag to indicate whether to enforce unique names for '
                        'Senlin objects belonging to the same project.')),
-    cfg.BoolOpt('rpc_use_object',
-                default=True,
-                help=_("!!!Temporary!!! This is a temporary flag indicating "
-                       "whether senlin RPC will use the versionedobjects "
-                       "based parameter passing")),
 ]
 cfg.CONF.register_opts(engine_opts)
 
-# DEFAULT, cloud_backend
+# DEFAULT, host
 rpc_opts = [
     cfg.StrOpt('host',
                default=socket.gethostname(),
@@ -106,11 +101,30 @@ cfg.CONF.register_opts(rpc_opts)
 
 # DEFAULT, cloud_backend
 cloud_backend_opts = [
-    cfg.StrOpt('cloud_backend',
-               default='openstack',
+    cfg.StrOpt('cloud_backend', default='openstack',
+               choices=("openstack", "openstack_test"),
                help=_('Default cloud backend to use.'))]
 cfg.CONF.register_opts(cloud_backend_opts)
 
+# DEFAULT, event dispatchers
+event_opts = [
+    cfg.MultiStrOpt("event_dispatchers", default=['database'],
+                    help=_("Event dispatchers to enable"))]
+cfg.CONF.register_opts(event_opts)
+
+# Dispatcher section
+dispatcher_group = cfg.OptGroup('dispatchers')
+dispatcher_opts = [
+    cfg.StrOpt('priority', default='info',
+               choices=("critical", "error", "warning", "info", "debug"),
+               help=_("Lowest event priorities to be dispatched.")),
+    cfg.BoolOpt("exclude_derived_actions", default=True,
+                help=_("Exclude derived actions from events dumping."))]
+
+cfg.CONF.register_group(dispatcher_group)
+cfg.CONF.register_opts(dispatcher_opts, group=dispatcher_group)
+
+# Authentication section
 authentication_group = cfg.OptGroup('authentication')
 authentication_opts = [
     cfg.StrOpt('auth_url', default='',
@@ -153,13 +167,11 @@ cfg.CONF.register_opts(revision_opts, group=revision_group)
 # Receiver group
 receiver_group = cfg.OptGroup('receiver')
 receiver_opts = [
-    cfg.StrOpt('host',
-               deprecated_group='webhook',
+    cfg.StrOpt('host', deprecated_group='webhook',
                help=_('The address for notifying and triggering receivers. '
                       'It is useful for case Senlin API service is running '
                       'behind a proxy.')),
-    cfg.PortOpt('port', default=8778,
-                deprecated_group='webhook',
+    cfg.PortOpt('port', default=8778, deprecated_group='webhook',
                 help=_('The port for notifying and triggering receivers. '
                        'It is useful for case Senlin API service is running '
                        'behind a proxy.')),
@@ -172,9 +184,8 @@ cfg.CONF.register_opts(receiver_opts, group=receiver_group)
 
 # Zaqar group
 zaqar_group = cfg.OptGroup(
-    'zaqar',
-    title='Zaqar Options',
-    help='Configuration options for zaqar trustee.')
+    'zaqar', title='Zaqar Options',
+    help=_('Configuration options for zaqar trustee.'))
 
 zaqar_opts = (
     ks_loading.get_auth_common_conf_options() +
@@ -209,11 +220,14 @@ def list_opts():
     """
     for g, o in wsgi.wsgi_opts():
         yield g, o
-    yield None, cloud_backend_opts
-    yield None, rpc_opts
-    yield None, engine_opts
-    yield None, service_opts
+    yield 'DEFAULT', cloud_backend_opts
+    yield 'DEFAULT', rpc_opts
+    yield 'DEFAULT', engine_opts
+    yield 'DEFAULT', service_opts
+    yield 'DEFAULT', event_opts
     yield authentication_group.name, authentication_opts
+    yield dispatcher_group.name, dispatcher_opts
+    yield healthmgr_group.name, healthmgr_opts
     yield revision_group.name, revision_opts
     yield receiver_group.name, receiver_opts
     yield zaqar_group.name, zaqar_opts

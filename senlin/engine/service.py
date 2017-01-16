@@ -30,19 +30,18 @@ from senlin.common import messaging as rpc_messaging
 from senlin.common import scaleutils as su
 from senlin.common import schema
 from senlin.common import utils
-from senlin.db.sqlalchemy import api as db_api
 from senlin.engine.actions import base as action_mod
 from senlin.engine import cluster as cluster_mod
-from senlin.engine import cluster_policy as cpm
 from senlin.engine import dispatcher
 from senlin.engine import environment
+from senlin.engine import event as EVENT
 from senlin.engine import health_manager
 from senlin.engine import node as node_mod
 from senlin.engine.receivers import base as receiver_mod
 from senlin.engine import scheduler
 from senlin.objects import action as action_obj
 from senlin.objects import base as obj_base
-from senlin.objects import cluster as cluster_obj
+from senlin.objects import cluster as co
 from senlin.objects import cluster_policy as cp_obj
 from senlin.objects import credential as cred_obj
 from senlin.objects import event as event_obj
@@ -59,19 +58,6 @@ CONF = cfg.CONF
 
 
 def request_context(func):
-    @functools.wraps(func)
-    def wrapped(self, ctx, *args, **kwargs):
-        if ctx is not None and not isinstance(ctx,
-                                              senlin_context.RequestContext):
-            ctx = senlin_context.RequestContext.from_dict(ctx.to_dict())
-        try:
-            return func(self, ctx, *args, **kwargs)
-        except exception.SenlinException:
-            raise oslo_messaging.rpc.dispatcher.ExpectedException()
-    return wrapped
-
-
-def request_context2(func):
     @functools.wraps(func)
     def wrapped(self, ctx, req):
         if ctx and not isinstance(ctx, senlin_context.RequestContext):
@@ -117,6 +103,7 @@ class EngineService(service.Service):
 
         # Initialize the global environment
         environment.initialize()
+        EVENT.load_dispatcher()
 
     def init_tgm(self):
         self.TG = scheduler.ThreadGroupManager()
@@ -136,10 +123,7 @@ class EngineService(service.Service):
         target = oslo_messaging.Target(version=consts.RPC_API_VERSION,
                                        server=self.host,
                                        topic=self.topic)
-        if CONF.rpc_use_object:
-            serializer = obj_base.VersionedObjectSerializer()
-        else:
-            serializer = None
+        serializer = obj_base.VersionedObjectSerializer()
         self._rpc_server = rpc_messaging.get_rpc_server(
             target, self, serializer=serializer)
         self._rpc_server.start()
@@ -210,6 +194,9 @@ class EngineService(service.Service):
                 continue
             if timeutils.is_older_than(svc['updated_at'], time_window):
                 LOG.info(_LI('Service %s was aborted'), svc['id'])
+                LOG.info(_LI('Breaking locks for dead engine %s'), svc['id'])
+                service_obj.Service.gc_by_engine(ctx, svc['id'])
+                LOG.info(_LI('Done breaking locks for engine %s'), svc['id'])
                 service_obj.Service.delete(ctx, svc['id'])
 
     def service_manage_cleanup(self):
@@ -221,72 +208,62 @@ class EngineService(service.Service):
             LOG.info(_LI("Finished cleaning up dead services."))
 
     @request_context
-    def credential_create(self, context, cred, attrs=None):
+    def credential_create(self, ctx, req):
         """Create the credential based on the context.
 
         We may add more parameters in future to the query parameter, for
         example as Senlin expands its support to non-OpenStack backends.
 
-        :param context: The requesting context which contains the user id
-                        along with other identity information.
-        :param cred: A credential to be associated with the user identity
-                     provided in the context.
-        :param dict attrs: Optional attributes associated with the credential.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the CredentialCreateRequest.
         :return: A dictionary containing the persistent credential.
         """
         values = {
-            'user': context.user,
-            'project': context.project,
-            'cred': {
-                'openstack': {
-                    'trust': cred
-                }
-            }
+            'user': ctx.user,
+            'project': ctx.project,
+            'cred': req.cred
         }
-        cred_obj.Credential.update_or_create(context, values)
-        return {'cred': cred}
+        cred_obj.Credential.update_or_create(ctx, values)
+        return {'cred': req.cred}
 
     @request_context
-    def credential_get(self, context, query=None):
+    def credential_get(self, ctx, req):
         """Get the credential based on the context.
 
-        We may add more parameters in future to the query parameter, for
+        We may add more parameters in future to the req.query, for
         example as Senlin expands its support to non-OpenStack backends.
 
-        :param context: The requesting context which contains the user id
-            along with other identity information.
-        :param dict query: Optional query parameters.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the CredentialGetRequest.
         :return: A dictionary containing the persistent credential, or None
             if no matching credential is found.
         """
-        res = cred_obj.Credential.get(context, context.user, context.project)
+        res = cred_obj.Credential.get(ctx, req.user, req.project)
         if res is None:
             return None
         return res.cred.get('openstack', None)
 
     @request_context
-    def credential_update(self, context, cred, **attrs):
+    def credential_update(self, ctx, req):
         """Update a credential based on the context and provided value.
 
         We may add more parameters in future to the query parameter, for
         example as Senlin expands its support to non-OpenStack backends.
 
-        :param context: The requesting context which contains the user id
-                        along with other identity information.
-        :param dict attrs: Optional attribute values to be associated with
-                           the credential.
-        :return: A dictionary containing the updated credential.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the CredentialUpdateRequest.
+        :return: A dictionary containing the persistent credential.
         """
-        cred_obj.Credential.update(context, context.user, context.project,
-                                   {'cred': {'openstack': {'trust': cred}}})
-        return {'cred': cred}
+        cred_obj.Credential.update(ctx, ctx.user, ctx.project,
+                                   {'cred': req.cred})
+        return {'cred': req.cred}
 
     @request_context
-    def get_revision(self, context):
+    def get_revision(self, ctx, req):
         return CONF.revision['senlin_engine_revision']
 
-    @request_context2
-    def profile_type_list2(self, ctx, req):
+    @request_context
+    def profile_type_list(self, ctx, req):
         """List known profile type implementations.
 
         :param ctx: An instance of the request context.
@@ -295,8 +272,8 @@ class EngineService(service.Service):
         """
         return environment.global_env().get_profile_types()
 
-    @request_context2
-    def profile_type_get2(self, ctx, req):
+    @request_context
+    def profile_type_get(self, ctx, req):
         """Get the details about a profile type.
 
         :param ctx: An instance of the request context.
@@ -311,37 +288,24 @@ class EngineService(service.Service):
             'schema': data
         }
 
-    def profile_find(self, context, identity, project_safe=True):
-        """Find a profile with the given identity.
+    @request_context
+    def profile_type_ops(self, ctx, req):
+        """List the operations supported by a profile type.
 
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of a profile.
-        :param project_safe: A boolean indicating whether profile from
-                             projects other than the requesting one can be
-                             returned.
-        :return: A DB object of profile or an exception `ResourceNotFound`
-                 if no matching object is found.
+        :param ctx: An instance of the request context.
+        :param req: An instance of ProfileTypeOpListRequest.
+        :return: A dictionary containing the operations supported by the
+                 profile type.
         """
-        if uuidutils.is_uuid_like(identity):
-            profile = profile_obj.Profile.get(context, identity,
-                                              project_safe=project_safe)
-            if not profile:
-                profile = profile_obj.Profile.get_by_name(
-                    context, identity, project_safe=project_safe)
-        else:
-            profile = profile_obj.Profile.get_by_name(
-                context, identity, project_safe=project_safe)
-            if not profile:
-                profile = profile_obj.Profile.get_by_short_id(
-                    context, identity, project_safe=project_safe)
+        try:
+            pt = environment.global_env().get_profile(req.type_name)
+        except exception.ResourceNotFound as ex:
+            raise exception.BadRequest(msg=six.text_type(ex))
 
-        if not profile:
-            raise exception.ResourceNotFound(type='profile', id=identity)
+        return {'operations': pt.get_ops()}
 
-        return profile
-
-    @request_context2
-    def profile_list2(self, ctx, req):
+    @request_context
+    def profile_list(self, ctx, req):
         """List profiles matching the specified criteria.
 
         :param ctx: An instance of the request context.
@@ -367,7 +331,7 @@ class EngineService(service.Service):
         if filters:
             query['filters'] = filters
 
-        profiles = profile_base.Profile.load_all(ctx, **query)
+        profiles = profile_obj.Profile.get_all(ctx, **query)
         return [p.to_dict() for p in profiles]
 
     def _validate_profile(self, context, spec, name=None,
@@ -375,7 +339,7 @@ class EngineService(service.Service):
         """Validate a profile.
 
         :param context: An instance of the request context.
-        :param name: The name for the profile to be created.
+        :param name: The name of the profile to be validated.
         :param spec: A dictionary containing the spec for the profile.
         :param metadata: A dictionary containing optional key-value pairs to
                          be associated with the profile.
@@ -385,11 +349,7 @@ class EngineService(service.Service):
         """
         type_name, version = schema.get_spec_version(spec)
         type_str = "-".join([type_name, version])
-        try:
-            plugin = environment.global_env().get_profile(type_str)
-        except exception.ResourceNotFound as ex:
-            msg = ex.enhance_msg('specified', ex)
-            raise exception.SpecValidationFailed(message=msg)
+        plugin = environment.global_env().get_profile(type_str)
 
         kwargs = {
             'user': context.user,
@@ -402,15 +362,15 @@ class EngineService(service.Service):
         profile = plugin(name, spec, **kwargs)
         try:
             profile.validate(validate_props=validate_props)
-        except exception.InvalidSpec as ex:
+        except exception.ESchema as ex:
             msg = six.text_type(ex)
             LOG.error(_LE("Failed in validating profile: %s"), msg)
-            raise exception.SpecValidationFailed(message=msg)
+            raise exception.InvalidSpec(message=msg)
 
         return profile
 
-    @request_context2
-    def profile_create2(self, ctx, req):
+    @request_context
+    def profile_create(self, ctx, req):
         """Create a profile with the given properties.
 
         :param ctx: An instance of the request context.
@@ -431,9 +391,12 @@ class EngineService(service.Service):
 
         LOG.info(_LI("Creating profile '%s'."), name)
 
-        profile = self._validate_profile(ctx, req.profile.spec, name=name,
-                                         metadata=metadata)
-        profile.store(ctx)
+        # NOTE: we get the Profile subclass directly to ensure we are calling
+        # the correct methods.
+        type_name, version = schema.get_spec_version(req.profile.spec)
+        type_str = "-".join([type_name, version])
+        cls = environment.global_env().get_profile(type_str)
+        profile = cls.create(ctx, name, req.profile.spec, metadata=metadata)
 
         LOG.info(_LI("Profile %(name)s is created: %(id)s."),
                  {'name': name, 'id': profile.id})
@@ -441,39 +404,7 @@ class EngineService(service.Service):
         return profile.to_dict()
 
     @request_context
-    def profile_create(self, context, name, spec, metadata=None):
-        """Create a profile with the given properties.
-
-        :param context: An instance of the request context.
-        :param name: The name for the profile to be created.
-        :param spec: A dictionary containing the spec for the profile.
-        :param metadata: A dictionary containing optional key-value pairs to
-                         be associated with the profile.
-        :return: A dictionary containing the details of the profile object
-                 created.
-        """
-        if CONF.name_unique:
-            if profile_obj.Profile.get_by_name(context, name):
-                msg = _("A profile named '%(name)s' already exists."
-                        ) % {"name": name}
-                raise exception.BadRequest(msg=msg)
-
-        profile = self._validate_profile(context, spec, name=name,
-                                         metadata=metadata)
-
-        LOG.info(_LI("Creating profile %(type)s '%(name)s'."),
-                 {'type': profile.type, 'name': profile.name})
-
-        profile.store(context)
-        profile.add_dependents(context, profile.id)
-
-        LOG.info(_LI("Profile %(name)s is created: %(id)s."),
-                 {'name': name, 'id': profile.id})
-
-        return profile.to_dict()
-
-    @request_context2
-    def profile_validate2(self, ctx, req):
+    def profile_validate(self, ctx, req):
         """Validate a profile with the given properties.
 
         :param ctx: An instance of the request context.
@@ -487,20 +418,7 @@ class EngineService(service.Service):
         return profile.to_dict()
 
     @request_context
-    def profile_validate(self, context, spec):
-        """Validate a profile with the given properties.
-
-        :param context: An instance of the request context.
-        :param spec: A dictionary containing the spec for the profile.
-        :return: A dictionary containing the details of the profile object
-                 validated.
-        """
-        profile = self._validate_profile(context, spec, validate_props=True)
-
-        return profile.to_dict()
-
-    @request_context2
-    def profile_get2(self, ctx, req):
+    def profile_get(self, ctx, req):
         """Retrieve the details about a profile.
 
         :param ctx: An instance of the request context.
@@ -508,12 +426,11 @@ class EngineService(service.Service):
         :return: A dictionary containing the profile details, or an exception
                  of type `ResourceNotFound` if no matching object is found.
         """
-        db_profile = self.profile_find(ctx, req.identity)
-        profile = profile_base.Profile.load(ctx, profile=db_profile)
+        profile = profile_obj.Profile.find(ctx, req.identity)
         return profile.to_dict()
 
-    @request_context2
-    def profile_update2(self, ctx, req):
+    @request_context
+    def profile_update(self, ctx, req):
         """Update the properties of a given profile.
 
         :param ctx: An instance of the request context.
@@ -523,10 +440,11 @@ class EngineService(service.Service):
                   found.
         """
         LOG.info(_LI("Updating profile '%(id)s.'"), {'id': req.identity})
-        db_profile = self.profile_find(ctx, req.identity)
+        db_profile = profile_obj.Profile.find(ctx, req.identity)
         profile = profile_base.Profile.load(ctx, profile=db_profile)
         changed = False
-        if req.profile.obj_attr_is_set('name'):
+        if (req.profile.obj_attr_is_set('name') and
+                req.profile.name is not None):
             if req.profile.name != profile.name:
                 profile.name = req.profile.name
                 changed = True
@@ -543,8 +461,8 @@ class EngineService(service.Service):
         LOG.info(_LI("Profile '%(id)s' is updated."), {'id': req.identity})
         return profile.to_dict()
 
-    @request_context2
-    def profile_delete2(self, ctx, req):
+    @request_context
+    def profile_delete(self, ctx, req):
         """Delete the specified profile.
 
         :param ctx: An instance of the request context.
@@ -552,24 +470,20 @@ class EngineService(service.Service):
         :return: None if succeeded or an exception of `ResourceInUse` if
                  profile is referenced by certain clusters/nodes.
         """
-        db_profile = self.profile_find(ctx, req.identity)
+        db_profile = profile_obj.Profile.find(ctx, req.identity)
         LOG.info(_LI("Deleting profile '%s'."), req.identity)
+
+        cls = environment.global_env().get_profile(db_profile.type)
         try:
-            profile_base.Profile.delete(ctx, db_profile.id)
+            cls.delete(ctx, db_profile.id)
         except exception.EResourceBusy:
             reason = _("still referenced by some clusters and/or nodes.")
             raise exception.ResourceInUse(type='profile', id=db_profile.id,
                                           reason=reason)
-        spec = db_profile.spec
-        if spec['type'] == 'container.dockerinc.docker':
-            cluster_id = spec['properties']['host_cluster']
-            db_api.cluster_remove_dependents(ctx, cluster_id,
-                                             db_profile.id)
-
         LOG.info(_LI("Profile '%s' is deleted."), req.identity)
 
-    @request_context2
-    def policy_type_list2(self, ctx, req):
+    @request_context
+    def policy_type_list(self, ctx, req):
         """List known policy type implementations.
 
         :param ctx: An instance of the request context.
@@ -578,8 +492,8 @@ class EngineService(service.Service):
         """
         return environment.global_env().get_policy_types()
 
-    @request_context2
-    def policy_type_get2(self, ctx, req):
+    @request_context
+    def policy_type_get(self, ctx, req):
         """Get the details about a policy type.
 
         :param ctx: An instance of the request context.
@@ -594,37 +508,8 @@ class EngineService(service.Service):
             'schema': data
         }
 
-    def policy_find(self, context, identity, project_safe=True):
-        """Find a policy with the given identity.
-
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of a profile.
-        :param project_safe: A boolean indicating whether policies from
-                             projects other than the requesting one should be
-                             evaluated.
-        :return: A DB object of policy or an exception of `ResourceNotFound`
-                 if no matching object is found.
-        """
-        if uuidutils.is_uuid_like(identity):
-            policy = policy_obj.Policy.get(context, identity,
-                                           project_safe=project_safe)
-            if not policy:
-                policy = policy_obj.Policy.get_by_name(
-                    context, identity, project_safe=project_safe)
-        else:
-            policy = policy_obj.Policy.get_by_name(context, identity,
-                                                   project_safe=project_safe)
-            if not policy:
-                policy = policy_obj.Policy.get_by_short_id(
-                    context, identity, project_safe=project_safe)
-
-        if not policy:
-            raise exception.ResourceNotFound(type='policy', id=identity)
-
-        return policy
-
-    @request_context2
-    def policy_list2(self, ctx, req):
+    @request_context
+    def policy_list(self, ctx, req):
         """List policies matching the specified criteria
 
         :param ctx: An instance of request context.
@@ -650,27 +535,22 @@ class EngineService(service.Service):
         if filters:
             query['filters'] = filters
 
-        return [p.to_dict()
-                for p in policy_base.Policy.load_all(ctx, **query)]
+        return [p.to_dict() for p in policy_obj.Policy.get_all(ctx, **query)]
 
-    @request_context
     def _validate_policy(self, context, spec, name=None, validate_props=False):
         """Validate a policy.
 
         :param context: An instance of the request context.
         :param spec: A dictionary containing the spec for the policy.
-        :param name: The name for the policy to be created.
+        :param name: The name of the policy to be validated.
         :param validate_props: Whether to validate the value of property.
         :return: Validated policy object.
         """
 
         type_name, version = schema.get_spec_version(spec)
         type_str = "-".join([type_name, version])
-        try:
-            plugin = environment.global_env().get_policy(type_str)
-        except exception.ResourceNotFound as ex:
-            msg = ex.enhance_msg('specified', ex)
-            raise exception.SpecValidationFailed(message=msg)
+
+        plugin = environment.global_env().get_policy(type_str)
 
         kwargs = {
             'user': context.user,
@@ -686,12 +566,12 @@ class EngineService(service.Service):
         except exception.InvalidSpec as ex:
             msg = six.text_type(ex)
             LOG.error(_LE("Failed in validating policy: %s"), msg)
-            raise exception.SpecValidationFailed(message=msg)
+            raise exception.InvalidSpec(message=msg)
 
         return policy
 
-    @request_context2
-    def policy_create2(self, ctx, req):
+    @request_context
+    def policy_create(self, ctx, req):
         """Create a policy with the given name and spec.
 
         :param ctx: An instance of the request context.
@@ -717,39 +597,45 @@ class EngineService(service.Service):
                  {'name': name, 'id': policy.id})
         return policy.to_dict()
 
-    @request_context2
-    def policy_get2(self, ctx, req):
+    @request_context
+    def policy_get(self, ctx, req):
         """Retrieve the details about a policy.
 
         :param ctx: An instance of request context.
         :param req: An instance of the PolicyGetRequest.
         :return: A dictionary containing the policy details.
         """
-        db_policy = self.policy_find(ctx, req.identity)
-        policy = policy_base.Policy.load(ctx, db_policy=db_policy)
+        policy = policy_obj.Policy.find(ctx, req.identity)
         return policy.to_dict()
 
-    @request_context2
-    def policy_update2(self, ctx, req):
+    @request_context
+    def policy_update(self, ctx, req):
         """Update the properties of a given policy
 
         :param ctx: An instance of request context.
         :param req: An instance of the PolicyUpdateRequest.
         :return: A dictionary containing the policy details.
         """
-        db_policy = self.policy_find(ctx, req.identity)
+        db_policy = policy_obj.Policy.find(ctx, req.identity)
         policy = policy_base.Policy.load(ctx, db_policy=db_policy)
 
-        if req.policy.name != policy.name:
+        changed = False
+        if (req.policy.name is not None and
+                req.policy.name != policy.name):
             LOG.info(_LI("Updating policy '%s'."), req.identity)
             policy.name = req.policy.name
+            changed = True
             policy.store(ctx)
             LOG.info(_LI("Policy '%s' is updated."), req.identity)
 
+        if not changed:
+            msg = _("No property needs an update.")
+            raise exception.BadRequest(msg=msg)
+
         return policy.to_dict()
 
-    @request_context2
-    def policy_delete2(self, ctx, req):
+    @request_context
+    def policy_delete(self, ctx, req):
         """Delete the specified policy.
 
         :param ctx: An instance of the request context.
@@ -757,7 +643,7 @@ class EngineService(service.Service):
         :return: None if succeeded or an exception of `ResourceInUse` if
                  policy is still attached to certain clusters.
         """
-        db_policy = self.policy_find(ctx, req.identity)
+        db_policy = policy_obj.Policy.find(ctx, req.identity)
         LOG.info(_LI("Deleting policy '%s'."), req.identity)
         try:
             policy_base.Policy.delete(ctx, db_policy.id)
@@ -767,8 +653,8 @@ class EngineService(service.Service):
                                           reason=reason)
         LOG.info(_LI("Policy '%s' is deleted."), req.identity)
 
-    @request_context2
-    def policy_validate2(self, ctx, req):
+    @request_context
+    def policy_validate(self, ctx, req):
         """Validate a policy with the given properties.
 
         :param ctx: An instance of the request context.
@@ -781,39 +667,8 @@ class EngineService(service.Service):
 
         return policy.to_dict()
 
-    def cluster_find(self, context, identity, project_safe=True):
-        """Find a cluster with the given identity.
-
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short ID of a cluster.
-        :param project_safe: A boolean parameter specifying whether only
-                             clusters from the same project are qualified to
-                             be returned.
-        :return: An instance of `Cluster` class.
-        :raises: `ResourceNotFound` if no matching object can be found.
-        """
-
-        if uuidutils.is_uuid_like(identity):
-            cluster = cluster_obj.Cluster.get(context, identity,
-                                              project_safe=project_safe)
-            if not cluster:
-                cluster = cluster_obj.Cluster.get_by_name(
-                    context, identity, project_safe=project_safe)
-        else:
-            cluster = cluster_obj.Cluster.get_by_name(
-                context, identity, project_safe=project_safe)
-            # maybe it is a short form of UUID
-            if not cluster:
-                cluster = cluster_obj.Cluster.get_by_short_id(
-                    context, identity, project_safe=project_safe)
-
-        if not cluster:
-            raise exception.ResourceNotFound(type='cluster', id=identity)
-
-        return cluster
-
-    @request_context2
-    def cluster_list2(self, ctx, req):
+    @request_context
+    def cluster_list(self, ctx, req):
         """List clusters matching the specified criteria.
 
         :param ctx: An instance of request context.
@@ -842,15 +697,15 @@ class EngineService(service.Service):
         return [c.to_dict()
                 for c in cluster_mod.Cluster.load_all(ctx, **query)]
 
-    @request_context2
-    def cluster_get2(self, context, req):
+    @request_context
+    def cluster_get(self, context, req):
         """Retrieve the cluster specified.
 
         :param context: An instance of the request context.
         :param req: An instance of the ClusterGetRequest.
         :return: A dictionary containing the details about a cluster.
         """
-        db_cluster = self.cluster_find(context, req.identity)
+        db_cluster = co.Cluster.find(context, req.identity)
         cluster = cluster_mod.Cluster.load(context, dbcluster=db_cluster)
         return cluster.to_dict()
 
@@ -861,13 +716,13 @@ class EngineService(service.Service):
         :return: None if cluster creation is okay, or an exception of type
                  `Forbbiden` if number of clusters reaches the maximum.
         """
-        existing = cluster_obj.Cluster.count_all(context)
+        existing = co.Cluster.count_all(context)
         maximum = CONF.max_clusters_per_project
         if existing >= maximum:
             raise exception.Forbidden()
 
-    @request_context2
-    def cluster_create2(self, ctx, req):
+    @request_context
+    def cluster_create(self, ctx, req):
         """Create a cluster.
 
         :param ctx: An instance of the request context.
@@ -877,12 +732,12 @@ class EngineService(service.Service):
         """
         self.check_cluster_quota(ctx)
         if CONF.name_unique:
-            if cluster_obj.Cluster.get_by_name(ctx, req.name):
+            if co.Cluster.get_by_name(ctx, req.name):
                 msg = _("a cluster named '%s' already exists.") % req.name
                 raise exception.BadRequest(msg=msg)
 
         try:
-            db_profile = self.profile_find(ctx, req.profile_id)
+            db_profile = profile_obj.Profile.find(ctx, req.profile_id)
         except exception.ResourceNotFound as ex:
             msg = ex.enhance_msg('specified', ex)
             raise exception.BadRequest(msg=msg)
@@ -919,7 +774,7 @@ class EngineService(service.Service):
         # Build an Action for cluster creation
         kwargs = {
             'name': 'cluster_create_%s' % cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
         }
         action_id = action_mod.Action.create(ctx, cluster.id,
@@ -931,8 +786,8 @@ class EngineService(service.Service):
         result['action'] = action_id
         return result
 
-    @request_context2
-    def cluster_update2(self, ctx, req):
+    @request_context
+    def cluster_update(self, ctx, req):
         """Update a cluster.
 
         :param ctx: An instance of the request context.
@@ -940,7 +795,7 @@ class EngineService(service.Service):
         :return: A dictionary containing the details about the cluster and the
                  ID of the action triggered by this operation.
         """
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         cluster = cluster_mod.Cluster.load(ctx, dbcluster=db_cluster)
         if cluster.status == consts.CS_ERROR:
             msg = _('Updating a cluster in error state')
@@ -952,9 +807,9 @@ class EngineService(service.Service):
         inputs = {}
         if (req.obj_attr_is_set(consts.CLUSTER_PROFILE) and
                 req.profile_id is not None):
-            old_profile = self.profile_find(ctx, cluster.profile_id)
+            old_profile = profile_obj.Profile.find(ctx, cluster.profile_id)
             try:
-                new_profile = self.profile_find(ctx, req.profile_id)
+                new_profile = profile_obj.Profile.find(ctx, req.profile_id)
             except exception.ResourceNotFound as ex:
                 msg = ex.enhance_msg('specified', ex)
                 raise exception.BadRequest(msg=msg)
@@ -962,7 +817,7 @@ class EngineService(service.Service):
             if new_profile.type != old_profile.type:
                 msg = _('Cannot update a cluster to a different profile type, '
                         'operation aborted.')
-                raise exception.ProfileTypeNotMatch(message=msg)
+                raise exception.BadRequest(msg=msg)
             if old_profile.id != new_profile.id:
                 inputs['new_profile_id'] = new_profile.id
 
@@ -982,7 +837,7 @@ class EngineService(service.Service):
 
         kwargs = {
             'name': 'cluster_update_%s' % cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': inputs,
         }
@@ -995,8 +850,8 @@ class EngineService(service.Service):
         resp['action'] = action_id
         return resp
 
-    @request_context2
-    def cluster_delete2(self, ctx, req):
+    @request_context
+    def cluster_delete(self, ctx, req):
         """Delete the specified cluster.
 
         :param ctx: An instance of the request context.
@@ -1006,7 +861,7 @@ class EngineService(service.Service):
         LOG.info(_LI('Deleting cluster %s'), req.identity)
 
         # 'cluster' below is a DB object.
-        cluster = self.cluster_find(ctx, req.identity)
+        cluster = co.Cluster.find(ctx, req.identity)
         if cluster.status in [consts.CS_CREATING,
                               consts.CS_UPDATING,
                               consts.CS_DELETING,
@@ -1016,7 +871,7 @@ class EngineService(service.Service):
 
         # collect all errors
         msg = []
-        con_profiles = cluster.dependents.get('profile', None)
+        con_profiles = cluster.dependents.get('profiles', None)
         if con_profiles is not None:
             err = _("still referenced by profile(s): %s") % con_profiles
             LOG.error(err)
@@ -1043,7 +898,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_delete_%s' % cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
         }
         action_id = action_mod.Action.create(ctx, cluster.id,
@@ -1053,8 +908,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_add_nodes2(self, context, req):
+    @request_context
+    def cluster_add_nodes(self, context, req):
         """Add specified nodes to the specified cluster.
 
         :param context: An instance of the request context.
@@ -1064,7 +919,7 @@ class EngineService(service.Service):
         LOG.info(_LI("Adding nodes '%(nodes)s' to cluster '%(cluster)s'."),
                  {'cluster': req.identity, 'nodes': req.nodes})
 
-        db_cluster = self.cluster_find(context, req.identity)
+        db_cluster = co.Cluster.find(context, req.identity)
         db_cluster_profile = profile_obj.Profile.get(
             context, db_cluster.profile_id, project_safe=True)
         cluster_profile_type = db_cluster_profile.type
@@ -1076,10 +931,11 @@ class EngineService(service.Service):
         not_match_nodes = []
         for node in req.nodes:
             try:
-                db_node = self.node_find(context, node)
-                # Skip node in the same cluster already
+                db_node = node_obj.Node.find(context, node)
+                # Check node status whether in ACTIVE
                 if db_node.status != consts.NS_ACTIVE:
                     bad_nodes.append(db_node.id)
+                # Check the node whether owned by any cluster
                 if db_node.cluster_id:
                     owned_nodes.append(db_node.id)
                 # check profile type matching
@@ -1090,7 +946,7 @@ class EngineService(service.Service):
                     not_match_nodes.append(db_node.id)
 
                 found.append(db_node.id)
-            except exception.ResourceNotFound:
+            except (exception.ResourceNotFound, exception.MultipleChoices):
                 not_found.append(node)
                 pass
 
@@ -1119,7 +975,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_add_nodes_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': {'nodes': found},
         }
@@ -1131,8 +987,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_del_nodes2(self, ctx, req):
+    @request_context
+    def cluster_del_nodes(self, ctx, req):
         """Delete specified nodes from the named cluster.
 
         :param ctx: An instance of the request context.
@@ -1141,14 +997,14 @@ class EngineService(service.Service):
         """
         LOG.info(_LI("Deleting nodes '%(nodes)s' from cluster '%(cluster)s'."),
                  {'cluster': req.identity, 'nodes': req.nodes})
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         found = []
         not_found = []
         bad_nodes = []
         depended_nodes = []
         for node in req.nodes:
             try:
-                db_node = self.node_find(ctx, node)
+                db_node = node_obj.Node.find(ctx, node)
                 dep_nodes = db_node.dependents.get('nodes', None)
                 if db_node.cluster_id != db_cluster.id:
                     bad_nodes.append(db_node.id)
@@ -1156,7 +1012,7 @@ class EngineService(service.Service):
                     depended_nodes.append(db_node.id)
                 else:
                     found.append(db_node.id)
-            except exception.ResourceNotFound:
+            except (exception.ResourceNotFound, exception.MultipleChoices):
                 not_found.append(node)
                 pass
 
@@ -1186,13 +1042,16 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_del_nodes_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': {
                 'candidates': found,
                 'count': len(found),
             },
         }
+        if 'destroy_after_deletion' in req:   # version 1.1
+            params['inputs'].update(
+                {'destroy_after_deletion': req.destroy_after_deletion})
         action_id = action_mod.Action.create(ctx, db_cluster.id,
                                              consts.CLUSTER_DEL_NODES,
                                              **params)
@@ -1225,14 +1084,14 @@ class EngineService(service.Service):
         not_match_nodes = []
         for (old_node, new_node) in nodes.items():
             try:
-                db_old_node = self.node_find(ctx, old_node)
-            except exception.ResourceNotFound:
+                db_old_node = node_obj.Node.find(ctx, old_node)
+            except (exception.ResourceNotFound, exception.MultipleChoices):
                 not_found_old.append(old_node)
                 continue
 
             try:
-                db_new_node = self.node_find(ctx, new_node)
-            except exception.ResourceNotFound:
+                db_new_node = node_obj.Node.find(ctx, new_node)
+            except (exception.ResourceNotFound, exception.MultipleChoices):
                 not_found_new.append(new_node)
                 continue
 
@@ -1277,8 +1136,8 @@ class EngineService(service.Service):
 
         return found
 
-    @request_context2
-    def cluster_replace_nodes2(self, ctx, req):
+    @request_context
+    def cluster_replace_nodes(self, ctx, req):
         """Replace the nodes in cluster with specified nodes
 
         :param ctx: An instance of the request context.
@@ -1286,12 +1145,12 @@ class EngineService(service.Service):
         :return: A dictionary containing the ID of the action triggered.
         """
         LOG.info(_LI("Replace nodes of the cluster '%s'."), req.identity)
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
 
         nodes = self._validate_replace_nodes(ctx, db_cluster, req.nodes)
         kwargs = {
             'name': 'cluster_replace_nodes_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': nodes,
         }
@@ -1303,8 +1162,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_resize2(self, ctx, req):
+    @request_context
+    def cluster_resize(self, ctx, req):
         """Adjust cluster size parameters.
 
         :param ctx: An instance of the request context.
@@ -1353,7 +1212,7 @@ class EngineService(service.Service):
         if req.obj_attr_is_set(consts.ADJUSTMENT_STRICT):
             strict = req.strict
 
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         current = node_obj.Node.count_by_cluster(ctx, db_cluster.id)
         if adj_type is not None:
             desired = su.calculate_desired(current, adj_type, number, min_step)
@@ -1376,7 +1235,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_resize_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': {
                 consts.ADJUSTMENT_TYPE: adj_type,
@@ -1394,15 +1253,15 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_scale_out2(self, ctx, req):
+    @request_context
+    def cluster_scale_out(self, ctx, req):
         """Inflate the size of a cluster by then given number (optional).
 
         :param ctx: Request context for the call.
         :param req: An instance of the ClusterScaleOutRequest object.
         :return: A dict with the ID of the action fired.
         """
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         if req.obj_attr_is_set('count'):
             if req.count == 0:
                 err = _("Count for scale-out request cannot be 0.")
@@ -1422,7 +1281,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_scale_out_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': inputs,
         }
@@ -1434,15 +1293,15 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_scale_in2(self, ctx, req):
+    @request_context
+    def cluster_scale_in(self, ctx, req):
         """Deflate the size of a cluster by given number (optional).
 
         :param ctx: Request context for the call.
-        :param req: An instance of the ClusterScaleOutRequest object.
+        :param req: An instance of the ClusterScaleInRequest object.
         :return: A dict with the ID of the action fired.
         """
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         if req.obj_attr_is_set('count'):
             if req.count == 0:
                 err = _("Count for scale-in request cannot be 0.")
@@ -1462,7 +1321,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_scale_in_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': inputs,
         }
@@ -1474,19 +1333,19 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_collect2(self, ctx, req):
+    @request_context
+    def cluster_collect(self, ctx, req):
         """Collect a certain attribute across a cluster.
 
         :param ctx: An instance of the request context.
         :param req: An instance of the ClusterCollectRequest object.
-        :return: A list containing values of attribute collected from all
+        :return: A dictionary containing values of attribute collected from all
                  nodes.
         """
         # validate 'path' string and return a parser,
         # The function may raise a BadRequest exception.
         parser = utils.get_path_parser(req.path)
-        cluster = self.cluster_find(ctx, req.identity)
+        cluster = co.Cluster.find(ctx, req.identity)
         nodes = node_mod.Node.load_all(ctx, cluster_id=cluster.id)
         attrs = []
         for node in nodes:
@@ -1499,8 +1358,8 @@ class EngineService(service.Service):
 
         return {'cluster_attributes': attrs}
 
-    @request_context2
-    def cluster_check2(self, ctx, req):
+    @request_context
+    def cluster_check(self, ctx, req):
         """Check the status of a cluster.
 
         :param ctx: An instance of the request context.
@@ -1508,7 +1367,7 @@ class EngineService(service.Service):
         :return: A dictionary containing the ID of the action triggered.
         """
         LOG.info(_LI("Checking cluster '%s'."), req.identity)
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         # cope with cluster check request from engine internal
         if not ctx.user or not ctx.project:
             ctx.user = db_cluster.user
@@ -1516,7 +1375,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_check_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': req.params if req.obj_attr_is_set('params') else {}
         }
@@ -1527,8 +1386,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_recover2(self, ctx, req):
+    @request_context
+    def cluster_recover(self, ctx, req):
         """Recover a cluster to a healthy status.
 
         :param ctx: An instance of the request context.
@@ -1536,7 +1395,7 @@ class EngineService(service.Service):
         :return: A dictionary containing the ID of the action triggered.
         """
         LOG.info(_LI("Recovering cluster '%s'."), req.identity)
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
 
         # cope with cluster check request from engine internal
         if not ctx.user or not ctx.project:
@@ -1545,7 +1404,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'cluster_recover_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': req.params if req.obj_attr_is_set('params') else {}
         }
@@ -1556,37 +1415,72 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    def node_find(self, context, identity, project_safe=True):
-        """Find a node with the given identity.
+    @request_context
+    def cluster_op(self, ctx, req):
+        """Perform an operation on the specified cluster.
 
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of a node.
-        :param project_safe: A boolean indicating whether only nodes from the
-                             same project as the requesting one are qualified
-                             to be returned.
-        :return: A DB object of Node or an exception of `ResourceNotFound` if
-                 no matching object is found.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the ClusterOperationRequest object.
+        :return: A dictionary containing the ID of the action triggered by the
+                 recover request.
         """
-        if uuidutils.is_uuid_like(identity):
-            node = node_obj.Node.get(context, identity,
-                                     project_safe=project_safe)
-            if not node:
-                node = node_obj.Node.get_by_name(context, identity,
-                                                 project_safe=project_safe)
+        LOG.info(_LI("Performing operation '%(o)s' on cluster '%(n)s'."),
+                 {'o': req.operation, 'n': req.identity})
+
+        db_cluster = co.Cluster.find(ctx, req.identity)
+        cluster = cluster_mod.Cluster.load(ctx, db_cluster=db_cluster)
+        profile = cluster.rt['profile']
+        if req.operation not in profile.OPERATIONS:
+            msg = _("The requested operation '%(o)s' is not supported by the "
+                    "profile type '%(t)s'."
+                    ) % {'o': req.operation, 't': profile.type}
+            raise exception.BadRequest(msg=msg)
+
+        if req.obj_attr_is_set('params') and req.params:
+            params = req.params
+            try:
+                profile.OPERATIONS[req.operation].validate(req.params)
+            except exception.ESchema as ex:
+                raise exception.BadRequest(msg=six.text_type(ex))
         else:
-            node = node_obj.Node.get_by_name(context, identity,
-                                             project_safe=project_safe)
-            if not node:
-                node = node_obj.Node.get_by_short_id(
-                    context, identity, project_safe=project_safe)
+            params = {}
 
-        if node is None:
-            raise exception.ResourceNotFound(type='node', id=identity)
+        if 'filters' in req and req.filters:
+            errors = []
+            for k in req.filters:
+                if k not in (consts.NODE_NAME, consts.NODE_PROFILE_ID,
+                             consts.NODE_STATUS, consts.NODE_ROLE):
+                    errors.append(_("Filter key '%s' is unsupported") % k)
+            if errors:
+                raise exception.BadRequest(msg='\n'.join(errors))
+            nodes = node_obj.Node.get_all(ctx, filters=req.filters,
+                                          cluster_id=cluster.id)
+        else:
+            nodes = node_obj.Node.get_all(ctx, cluster_id=cluster.id)
 
-        return node
+        node_ids = [node.id for node in nodes]
+        if not node_ids:
+            msg = _("No node (matching the filter) could be found")
+            raise exception.BadRequest(msg=msg)
 
-    @request_context2
-    def node_list2(self, ctx, req):
+        kwargs = {
+            'name': 'cluster_%s_%s' % (req.operation, cluster.id[:8]),
+            'cause': consts.CAUSE_RPC,
+            'status': action_mod.Action.READY,
+            'inputs': {
+                'operation': req.operation,
+                'params': params,
+                'nodes': node_ids,
+            }
+        }
+        action_id = action_mod.Action.create(
+            ctx, cluster.id, consts.CLUSTER_OPERATION, **kwargs)
+        dispatcher.start_action()
+        LOG.info(_LI("Cluster operation action is queued: %s."), action_id)
+        return {'action': action_id}
+
+    @request_context
+    def node_list(self, ctx, req):
         """List node records matching the specified criteria.
 
         :param ctx: An instance of the request context.
@@ -1605,7 +1499,11 @@ class EngineService(service.Service):
         if req.obj_attr_is_set('sort') and req.sort is not None:
             query['sort'] = req.sort
         if req.obj_attr_is_set('cluster_id') and req.cluster_id:
-            db_cluster = self.cluster_find(ctx, req.cluster_id)
+            try:
+                db_cluster = co.Cluster.find(ctx, req.cluster_id)
+            except exception.ResourceNotFound:
+                msg = _("Cannot find the given cluster: %s") % req.cluster_id
+                raise exception.BadRequest(msg=msg)
             query['cluster_id'] = db_cluster.id
 
         filters = {}
@@ -1619,8 +1517,8 @@ class EngineService(service.Service):
         nodes = node_mod.Node.load_all(ctx, **query)
         return [node.to_dict() for node in nodes]
 
-    @request_context2
-    def node_create2(self, ctx, req):
+    @request_context
+    def node_create(self, ctx, req):
         """Create a node.
 
         :param ctx: An instance of the request context.
@@ -1637,7 +1535,7 @@ class EngineService(service.Service):
         LOG.info(_LI("Creating node '%s'."), req.name)
 
         try:
-            node_profile = self.profile_find(ctx, req.profile_id)
+            node_profile = profile_obj.Profile.find(ctx, req.profile_id)
         except exception.ResourceNotFound as ex:
             msg = ex.enhance_msg('specified', ex)
             raise exception.BadRequest(msg=msg)
@@ -1645,22 +1543,21 @@ class EngineService(service.Service):
         req.obj_set_defaults()
         if req.cluster_id:
             try:
-                db_cluster = self.cluster_find(ctx, req.cluster_id)
-            except exception.ResourceNotFound as ex:
+                db_cluster = co.Cluster.find(ctx, req.cluster_id)
+            except (exception.ResourceNotFound,
+                    exception.MultipleChoices) as ex:
                 msg = ex.enhance_msg('specified', ex)
-
                 raise exception.BadRequest(msg=msg)
 
             cluster_id = db_cluster.id
             if node_profile.id != db_cluster.profile_id:
-                cluster_profile = self.profile_find(ctx,
-                                                    db_cluster.profile_id)
+                cluster_profile = profile_obj.Profile.find(
+                    ctx, db_cluster.profile_id)
                 if node_profile.type != cluster_profile.type:
                     msg = _('Node and cluster have different profile type, '
                             'operation aborted.')
-                    LOG.error(msg)
-                    raise exception.ProfileTypeNotMatch(message=msg)
-            index = cluster_obj.Cluster.get_next_index(ctx, cluster_id)
+                    raise exception.BadRequest(msg=msg)
+            index = co.Cluster.get_next_index(ctx, cluster_id)
         else:
             cluster_id = ''
             index = -1
@@ -1681,7 +1578,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'node_create_%s' % node.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
         }
         action_id = action_mod.Action.create(ctx, node.id,
@@ -1693,26 +1590,26 @@ class EngineService(service.Service):
         result['action'] = action_id
         return result
 
-    @request_context2
-    def node_get2(self, ctx, req):
+    @request_context
+    def node_get(self, ctx, req):
         """Retrieve the node specified.
 
         :param ctx: An instance of the request context.
-        :param req: An instance of the NodeGetRequestBody object.
+        :param req: An instance of the NodeGetRequest object.
         :return: A dictionary containing the detailed information about a node
                  or an exception of `ResourceNotFound` if no matching node
                  could be found.
         """
         req.obj_set_defaults()
-        db_node = self.node_find(ctx, req.identity)
+        db_node = node_obj.Node.find(ctx, req.identity)
         node = node_mod.Node.load(ctx, db_node=db_node)
         res = node.to_dict()
         if req.show_details and node.physical_id:
             res['details'] = node.get_details(ctx)
         return res
 
-    @request_context2
-    def node_update2(self, ctx, req):
+    @request_context
+    def node_update(self, ctx, req):
         """Update a node with new propertye values.
 
         :param ctx: An instance of the request context.
@@ -1723,22 +1620,21 @@ class EngineService(service.Service):
         """
         LOG.info(_LI("Updating node '%s'."), req.identity)
 
-        db_node = self.node_find(ctx, req.identity)
+        db_node = node_obj.Node.find(ctx, req.identity)
         if req.obj_attr_is_set('profile_id') and req.profile_id is not None:
             try:
-                db_profile = self.profile_find(ctx, req.profile_id)
+                db_profile = profile_obj.Profile.find(ctx, req.profile_id)
             except exception.ResourceNotFound as ex:
                 msg = ex.enhance_msg('specified', ex)
                 raise exception.BadRequest(msg=msg)
             profile_id = db_profile.id
 
             # check if profile_type matches
-            old_profile = self.profile_find(ctx, db_node.profile_id)
+            old_profile = profile_obj.Profile.find(ctx, db_node.profile_id)
             if old_profile.type != db_profile.type:
                 msg = _('Cannot update a node to a different profile type, '
                         'operation aborted.')
-                LOG.error(msg)
-                raise exception.ProfileTypeNotMatch(message=msg)
+                raise exception.BadRequest(msg=msg)
 
             inputs = {'new_profile_id': profile_id}
         else:
@@ -1759,7 +1655,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'node_update_%s' % db_node.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': inputs,
         }
@@ -1774,8 +1670,8 @@ class EngineService(service.Service):
 
         return resp
 
-    @request_context2
-    def node_delete2(self, ctx, req):
+    @request_context
+    def node_delete(self, ctx, req):
         """Delete the specified node.
 
         :param ctx: An instance of the request context.
@@ -1785,7 +1681,7 @@ class EngineService(service.Service):
         """
         LOG.info(_LI('Deleting node %s'), req.identity)
 
-        node = self.node_find(ctx, req.identity)
+        node = node_obj.Node.find(ctx, req.identity)
 
         if node.status in [consts.NS_CREATING,
                            consts.NS_UPDATING,
@@ -1794,15 +1690,15 @@ class EngineService(service.Service):
             raise exception.ActionInProgress(type='node', id=req.identity,
                                              status=node.status)
 
-        containers = node.dependents.get('containers', None)
-        if containers is not None and len(containers) > 0:
+        nodes = node.dependents.get('nodes', None)
+        if nodes is not None and len(nodes) > 0:
             reason = _("still depended by other clusters and/or nodes")
             raise exception.ResourceInUse(type='node', id=req.identity,
                                           reason=reason)
 
         params = {
             'name': 'node_delete_%s' % node.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
         }
         action_id = action_mod.Action.create(ctx, node.id,
@@ -1812,8 +1708,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def node_check2(self, ctx, req):
+    @request_context
+    def node_check(self, ctx, req):
         """Check the health status of specified node.
 
         :param ctx: An instance of the request context.
@@ -1823,11 +1719,11 @@ class EngineService(service.Service):
         """
         LOG.info(_LI("Checking node '%s'."), req.identity)
 
-        db_node = self.node_find(ctx, req.identity)
+        db_node = node_obj.Node.find(ctx, req.identity)
 
         kwargs = {
             'name': 'node_check_%s' % db_node.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY
         }
         if req.obj_attr_is_set('params') and req.params:
@@ -1839,8 +1735,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def node_recover2(self, ctx, req):
+    @request_context
+    def node_recover(self, ctx, req):
         """Recover the specified node.
 
         :param ctx: An instance of the request context.
@@ -1850,11 +1746,11 @@ class EngineService(service.Service):
         """
         LOG.info(_LI("Recovering node '%s'."), req.identity)
 
-        db_node = self.node_find(ctx, req.identity)
+        db_node = node_obj.Node.find(ctx, req.identity)
 
         kwargs = {
             'name': 'node_recover_%s' % db_node.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY
         }
         if req.obj_attr_is_set('params') and req.params:
@@ -1867,48 +1763,97 @@ class EngineService(service.Service):
         return {'action': action_id}
 
     @request_context
-    def cluster_policy_list(self, context, identity, filters=None, sort=None):
+    def node_op(self, ctx, req):
+        """Perform an operation on the specified node.
+
+        :param ctx: An instance of the request context.
+        :param req: An instance of the NodeOperationRequest object.
+        :return: A dictionary containing the ID of the action triggered by the
+                 operation request.
+        """
+        LOG.info(_LI("Performing operation '%(o)s' on node '%(n)s'."),
+                 {'o': req.operation, 'n': req.identity})
+
+        db_node = node_obj.Node.find(ctx, req.identity)
+        node = node_mod.Node.load(ctx, db_node=db_node)
+        profile = node.rt['profile']
+        if req.operation not in profile.OPERATIONS:
+            msg = _("The requested operation '%(o)s' is not supported by the "
+                    "profile type '%(t)s'."
+                    ) % {'o': req.operation, 't': profile.type}
+            raise exception.BadRequest(msg=msg)
+
+        params = {}
+        if req.obj_attr_is_set('params') and req.params:
+            params = req.params
+            try:
+                profile.OPERATIONS[req.operation].validate(req.params)
+            except exception.ESchema as ex:
+                raise exception.BadRequest(msg=six.text_type(ex))
+
+        kwargs = {
+            'name': 'node_%s_%s' % (req.operation, db_node.id[:8]),
+            'cause': consts.CAUSE_RPC,
+            'status': action_mod.Action.READY,
+            'inputs': {
+                'operation': req.operation,
+                'params': params
+            }
+        }
+        action_id = action_mod.Action.create(ctx, db_node.id,
+                                             consts.NODE_OPERATION, **kwargs)
+        dispatcher.start_action()
+        LOG.info(_LI("Node operation action is queued: %s."), action_id)
+        return {'action': action_id}
+
+    @request_context
+    def cluster_policy_list(self, ctx, req):
         """List cluster-policy bindings given the cluster identity.
 
-        :param context: An instance of the request context.
-        :param identity: The ID, name or short ID of the target cluster.
-        :param filters: A list of key-value pairs for filtering out the result
-                        list.
-        :param sort: A list of sorting keys (optionally appended with sorting
-                     directions) separated by commas.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the ClusterPolicyListRequest object.
         :return: A list containing dictionaries each representing a binding.
         """
-        utils.validate_sort_param(sort, consts.CLUSTER_POLICY_SORT_KEYS)
-        db_cluster = self.cluster_find(context, identity)
-        bindings = cpm.ClusterPolicy.load_all(
-            context, db_cluster.id, filters=filters, sort=sort)
+        sort = None
+        if req.obj_attr_is_set('sort'):
+            sort = req.sort
+        filters = {}
+        if req.obj_attr_is_set('policy_name'):
+            filters['policy_name'] = req.policy_name
+        if req.obj_attr_is_set('policy_type'):
+            filters['policy_type'] = req.policy_type
+        if req.obj_attr_is_set('enabled'):
+            filters['enabled'] = req.enabled
+
+        db_cluster = co.Cluster.find(ctx, req.identity)
+        bindings = cp_obj.ClusterPolicy.get_all(
+            ctx, db_cluster.id, filters=filters, sort=sort)
 
         return [binding.to_dict() for binding in bindings]
 
     @request_context
-    def cluster_policy_get(self, context, identity, policy_id):
+    def cluster_policy_get(self, ctx, req):
         """Get the binding record giving the cluster and policy identity.
 
-        :param context: An instance of the request context.
-        :param identity: The ID, name or short ID of the target cluster.
-        :param policy_id: The ID, name or short ID of the target policy.
+        :param ctx: An instance of request context.
+        :param req: An instance of the ClusterPolicyGetRequest object.
         :return: A dictionary containing the binding record, or raises an
-                 exception of ``PolicyNotAttached``.
+                 exception of ``PolicyBindingNotFound``.
         """
-        db_cluster = self.cluster_find(context, identity)
-        db_policy = self.policy_find(context, policy_id)
+        identity = req.identity
+        policy_id = req.policy_id
+        db_cluster = co.Cluster.find(ctx, identity)
+        db_policy = policy_obj.Policy.find(ctx, policy_id)
 
-        try:
-            binding = cpm.ClusterPolicy.load(
-                context, db_cluster.id, db_policy.id)
-        except exception.PolicyNotAttached:
+        binding = cp_obj.ClusterPolicy.get(ctx, db_cluster.id, db_policy.id)
+        if binding is None:
             raise exception.PolicyBindingNotFound(policy=policy_id,
                                                   identity=identity)
 
         return binding.to_dict()
 
-    @request_context2
-    def cluster_policy_attach2(self, ctx, req):
+    @request_context
+    def cluster_policy_attach(self, ctx, req):
         """Attach a policy to the specified cluster.
 
         This is done via an action because a cluster lock is needed.
@@ -1921,9 +1866,9 @@ class EngineService(service.Service):
                      "(%(cluster)s)."),
                  {'policy': req.policy_id, 'cluster': req.identity})
 
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         try:
-            db_policy = self.policy_find(ctx, req.policy_id)
+            db_policy = policy_obj.Policy.find(ctx, req.policy_id)
         except exception.ResourceNotFound as ex:
             msg = ex.enhance_msg('specified', ex)
             raise exception.BadRequest(msg=msg)
@@ -1932,11 +1877,11 @@ class EngineService(service.Service):
 
         params = {
             'name': 'attach_policy_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': {
                 'policy_id': db_policy.id,
-                'enabled': utils.parse_bool_param('enabled', req.enabled),
+                'enabled': req.enabled,
             }
         }
         action_id = action_mod.Action.create(ctx, db_cluster.id,
@@ -1947,8 +1892,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_policy_detach2(self, ctx, req):
+    @request_context
+    def cluster_policy_detach(self, ctx, req):
         """Detach a policy from the specified cluster.
 
         This is done via an action because cluster lock is needed.
@@ -1961,9 +1906,9 @@ class EngineService(service.Service):
                      "'%(cluster)s'."),
                  {'policy': req.policy_id, 'cluster': req.identity})
 
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         try:
-            db_policy = self.policy_find(ctx, req.policy_id)
+            db_policy = policy_obj.Policy.find(ctx, req.policy_id)
         except exception.ResourceNotFound as ex:
             msg = ex.enhance_msg('specified', ex)
             raise exception.BadRequest(msg=msg)
@@ -1977,7 +1922,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'detach_policy_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': {'policy_id': db_policy.id},
         }
@@ -1989,8 +1934,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    @request_context2
-    def cluster_policy_update2(self, ctx, req):
+    @request_context
+    def cluster_policy_update(self, ctx, req):
         """Update an existing policy binding on a cluster.
 
         This is done via an action because cluster lock is needed.
@@ -2002,9 +1947,9 @@ class EngineService(service.Service):
         LOG.info(_LI("Updating policy '%(policy)s' on cluster '%(cluster)s.'"),
                  {'policy': req.policy_id, 'cluster': req.identity})
 
-        db_cluster = self.cluster_find(ctx, req.identity)
+        db_cluster = co.Cluster.find(ctx, req.identity)
         try:
-            db_policy = self.policy_find(ctx, req.policy_id)
+            db_policy = policy_obj.Policy.find(ctx, req.policy_id)
         except exception.ResourceNotFound as ex:
             msg = ex.enhance_msg('specified', ex)
             raise exception.BadRequest(msg=msg)
@@ -2022,7 +1967,7 @@ class EngineService(service.Service):
 
         params = {
             'name': 'update_policy_%s' % db_cluster.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
             'inputs': inputs
         }
@@ -2034,34 +1979,8 @@ class EngineService(service.Service):
 
         return {'action': action_id}
 
-    def action_find(self, context, identity, project_safe=True):
-        """Find an action with the given identity.
-
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of an action.
-        :return: A DB object of action or an exception `ResourceNotFound` if
-                 no matching action is found.
-        """
-        if uuidutils.is_uuid_like(identity):
-            action = action_obj.Action.get(context, identity,
-                                           project_safe=project_safe)
-            if not action:
-                action = action_obj.Action.get_by_name(
-                    context, identity, project_safe=project_safe)
-        else:
-            action = action_obj.Action.get_by_name(
-                context, identity, project_safe=project_safe)
-            if not action:
-                action = action_obj.Action.get_by_short_id(
-                    context, identity, project_safe=project_safe)
-
-        if not action:
-            raise exception.ResourceNotFound(type='action', id=identity)
-
-        return action
-
-    @request_context2
-    def action_list2(self, ctx, req):
+    @request_context
+    def action_list(self, ctx, req):
         """List action records matching the specified criteria.
 
         :param ctx: An instance of the request context.
@@ -2092,44 +2011,47 @@ class EngineService(service.Service):
             filters['status'] = req.status
         if filters:
             query['filters'] = filters
-        results = action_mod.Action.load_all(ctx, **query)
 
-        return [a.to_dict() for a in results]
+        actions = action_obj.Action.get_all(ctx, **query)
+        return [a.to_dict() for a in actions]
 
     @request_context
-    def action_create(self, context, name, cluster, action, inputs=None):
+    def action_create(self, ctx, req):
         """Create an action with given details.
 
-        :param context: Request context instance.
-        :param name: Name of the action.
-        :param cluster: Name, ID or short ID of the targeted cluster.
-        :param action: String representation of the action.
-        :param inputs: Optional inputs for the action.
-        :return: A dict containing the action created.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the ActionCreateRequestBody object.
+        :return: A dictionary containing the details about the action and the
+                 ID of the action triggered by this operation.
         """
-        LOG.info(_LI("Creating action '%s'."), name)
+        LOG.info(_LI("Creating action '%s'."), req.name)
 
-        target = self.cluster_find(context, cluster)
+        req.obj_set_defaults()
+        try:
+            target = co.Cluster.find(ctx, req.cluster_id)
+        except exception.ResourceNotFound:
+            msg = _("Cannot find the given cluster: %s") % req.cluster_id
+            raise exception.BadRequest(msg=msg)
 
         # Create an action instance
         params = {
-            'name': name,
-            'cause': action_mod.CAUSE_RPC,
+            'name': req.name,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
-            'inputs': inputs or {},
+            'inputs': req.inputs or {},
         }
-        action_id = action_mod.Action.create(context, target.id, action,
+        action_id = action_mod.Action.create(ctx, target.id, req.action,
                                              **params)
 
         # TODO(Anyone): Uncomment this to notify the dispatcher
         # dispatcher.start_action(action_id=action.id)
 
         LOG.info(_LI("Action '%(name)s' is created: %(id)s."),
-                 {'name': name, 'id': action_id})
+                 {'name': req.name, 'id': action_id})
         return {'action': action_id}
 
-    @request_context2
-    def action_get2(self, ctx, req):
+    @request_context
+    def action_get(self, ctx, req):
         """Retrieve the action specified.
 
         :param ctx: An instance of the request context.
@@ -2139,66 +2061,36 @@ class EngineService(service.Service):
                  action could be found.
         """
 
-        db_action = self.action_find(ctx, req.identity)
-        action = action_mod.Action.load(ctx, db_action=db_action)
+        action = action_obj.Action.find(ctx, req.identity)
 
         return action.to_dict()
 
     @request_context
-    def action_delete(self, context, identity):
+    def action_delete(self, ctx, req):
         """Delete the specified action object.
 
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of an action object.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the ActionDeleteRequest object.
         :return: None if deletion was successful, or an exception of type
                  `ResourceInUse`.
         """
-        db_action = self.action_find(context, identity)
-        LOG.info(_LI("Deleting action '%s'."), identity)
+        db_action = action_obj.Action.find(ctx, req.identity)
+        LOG.info(_LI("Deleting action '%s'."), req.identity)
         try:
-            action_mod.Action.delete(context, db_action.id)
+            action_mod.Action.delete(ctx, db_action.id)
         except exception.EResourceBusy:
             reason = _("still in one of WAITING, RUNNING or SUSPENDED state")
-            raise exception.ResourceInUse(type='action', id=identity,
+            raise exception.ResourceInUse(type='action', id=req.identity,
                                           reason=reason)
 
-        LOG.info(_LI("Action '%s' is deleted."), identity)
+        LOG.info(_LI("Action '%s' is deleted."), req.identity)
 
-    def receiver_find(self, context, identity, project_safe=True):
-        """Find a receiver with the given identity.
-
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of a receiver.
-        :param project_safe: A boolean indicating whether receiver from other
-                             projects other than the requesting one can be
-                             returned.
-        :return: A DB object of receiver or an exception `ResourceNotFound`
-                 if no matching receiver is found.
-        """
-        if uuidutils.is_uuid_like(identity):
-            receiver = receiver_obj.Receiver.get(
-                context, identity, project_safe=project_safe)
-            if not receiver:
-                receiver = receiver_obj.Receiver.get_by_name(
-                    context, identity, project_safe=project_safe)
-        else:
-            receiver = receiver_obj.Receiver.get_by_name(
-                context, identity, project_safe=project_safe)
-            if not receiver:
-                receiver = receiver_obj.Receiver.get_by_short_id(
-                    context, identity, project_safe=project_safe)
-
-        if not receiver:
-            raise exception.ResourceNotFound(type='receiver', id=identity)
-
-        return receiver
-
-    @request_context2
-    def receiver_list2(self, ctx, req):
+    @request_context
+    def receiver_list(self, ctx, req):
         """List receivers matching the specified criteria.
 
         :param ctx: An instance of the request context.
-        :param req: An instance of the ReceiverListRequestBody object.
+        :param req: An instance of the ReceiverListRequest object.
         :return: A list of `Receiver` object representations.
         """
         req.obj_set_defaults()
@@ -2222,14 +2114,16 @@ class EngineService(service.Service):
             filters['action'] = req.action
         if req.obj_attr_is_set('cluster_id'):
             filters['cluster_id'] = req.cluster_id
+        if req.obj_attr_is_set('user'):
+            filters['user'] = req.user
         if filters:
             query['filters'] = filters
 
-        receivers = receiver_mod.Receiver.load_all(ctx, **query)
+        receivers = receiver_obj.Receiver.get_all(ctx, **query)
         return [r.to_dict() for r in receivers]
 
-    @request_context2
-    def receiver_create2(self, ctx, req):
+    @request_context
+    def receiver_create(self, ctx, req):
         """Create a receiver.
 
         :param ctx: An instance of the request context.
@@ -2263,8 +2157,9 @@ class EngineService(service.Service):
 
             # Check whether cluster identified by cluster_id does exist
             try:
-                cluster = self.cluster_find(ctx, req.cluster_id)
-            except exception.ResourceNotFound as ex:
+                cluster = co.Cluster.find(ctx, req.cluster_id)
+            except (exception.ResourceNotFound,
+                    exception.MultipleChoices) as ex:
                 msg = ex.enhance_msg('referenced', ex)
                 raise exception.BadRequest(msg=msg)
 
@@ -2287,36 +2182,26 @@ class EngineService(service.Service):
 
         return receiver.to_dict()
 
-    @request_context2
-    def receiver_get2(self, ctx, req):
+    @request_context
+    def receiver_get(self, ctx, req):
         """Get the details about a receiver.
 
         :param ctx: An instance of the request context.
-        :param req: An instance of the ReceiverGetRequestBody object.
+        :param req: An instance of the ReceiverGetRequest object.
         :return: A dictionary containing the details about a receiver or
                  an exception `ResourceNotFound` if no matching object found.
         """
-        db_receiver = self.receiver_find(ctx, req.identity)
-        receiver = receiver_mod.Receiver.load(ctx,
-                                              receiver_obj=db_receiver)
+        # NOTE: Temporary code to make tempest tests about webhook_trigger
+        #       pass, will remove in latter patches.
+        kwargs = {}
+        if ctx.is_admin is True:
+            kwargs['project_safe'] = False
+
+        receiver = receiver_obj.Receiver.find(ctx, req.identity, **kwargs)
         return receiver.to_dict()
 
     @request_context
-    def receiver_delete(self, context, identity):
-        """Delete the specified receiver.
-
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of a receiver.
-        :return: None if successfully deleted the receiver or an exception of
-                 `ResourceNotFound` if the object could not be found.
-        """
-        db_receiver = self.receiver_find(context, identity)
-        LOG.info(_LI("Deleting receiver %s."), identity)
-        receiver_mod.Receiver.delete(context, db_receiver.id)
-        LOG.info(_LI("Receiver %s is deleted."), identity)
-
-    @request_context2
-    def receiver_delete2(self, ctx, req):
+    def receiver_delete(self, ctx, req):
         """Delete the specified receiver.
 
         :param ctx: An instance of the request context.
@@ -2324,43 +2209,51 @@ class EngineService(service.Service):
         :return: None if successfully deleted the receiver or an exception of
                  `ResourceNotFound` if the object could not be found.
         """
-        db_receiver = self.receiver_find(ctx, req.identity)
+        db_receiver = receiver_obj.Receiver.find(ctx, req.identity)
         LOG.info(_LI("Deleting receiver %s."), req.identity)
         receiver_mod.Receiver.delete(ctx, db_receiver.id)
         LOG.info(_LI("Receiver %s is deleted."), req.identity)
 
     @request_context
-    def receiver_notify(self, context, identity, params=None):
+    def receiver_notify(self, ctx, req):
         """Handle notification to specified receiver.
 
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of a receiver.
-        :param params: Parameters received from notification.
+        :param ctx: An instance of the request context.
+        :param req: An instance of the ReceiverNotifyRequest object.
         """
-        db_receiver = self.receiver_find(context, identity)
+        db_receiver = receiver_obj.Receiver.find(ctx, req.identity)
         # permission checking
-        if not context.is_admin and context.user != db_receiver.user:
+        if not ctx.is_admin and ctx.user != db_receiver.user:
             raise exception.Forbidden()
 
         # Receiver type check
         if db_receiver.type != consts.RECEIVER_MESSAGE:
-            raise exception.Forbidden()
+            msg = _("Notifying non-message receiver is not allowed.")
+            raise exception.BadRequest(msg=msg)
 
-        LOG.info(_LI("Received notification to receiver %s."), identity)
-        receiver = receiver_mod.Receiver.load(context,
+        LOG.info(_LI("Received notification to receiver %s."), req.identity)
+        receiver = receiver_mod.Receiver.load(ctx,
                                               receiver_obj=db_receiver,
                                               project_safe=True)
-        receiver.notify(context, params)
+        receiver.notify(ctx)
 
     @request_context
-    def webhook_trigger(self, context, identity, params=None):
+    def webhook_trigger(self, ctx, req):
+        """trigger the webhook.
 
-        LOG.info(_LI("Triggering webhook (%s)."), identity)
-        receiver = self.receiver_find(context, identity)
+        :param ctx: An instance of the request context.
+        :param req: An instance of the WebhookTriggerRequest object.
+        :return: A dictionary contains the ID of the action fired.
+        """
+        identity = req.identity
+        params = req.body.params
+
+        LOG.info(_LI("Triggering webhook (%s)"), identity)
+        receiver = receiver_obj.Receiver.find(ctx, identity)
 
         try:
-            cluster = self.cluster_find(context, receiver.cluster_id)
-        except exception.ResourceNotFound as ex:
+            cluster = co.Cluster.find(ctx, receiver.cluster_id)
+        except (exception.ResourceNotFound, exception.MultipleChoices) as ex:
             msg = ex.enhance_msg('referenced', ex)
             raise exception.BadRequest(msg=msg)
 
@@ -2370,42 +2263,21 @@ class EngineService(service.Service):
 
         kwargs = {
             'name': 'webhook_%s' % receiver.id[:8],
-            'cause': action_mod.CAUSE_RPC,
+            'cause': consts.CAUSE_RPC,
             'status': action_mod.Action.READY,
-            'inputs': data,
+            'inputs': data
         }
-        action_id = action_mod.Action.create(context, cluster.id,
+
+        action_id = action_mod.Action.create(ctx, cluster.id,
                                              receiver.action, **kwargs)
         dispatcher.start_action()
-        LOG.info(_LI("Webhook %(w)s' triggered with action queued: %(a)s."),
+        LOG.info(_LI("Webhook %(w)s triggered with action queued: %(a)s."),
                  {'w': identity, 'a': action_id})
 
         return {'action': action_id}
 
-    def event_find(self, context, identity, project_safe=True):
-        """Find an event with the given identity.
-
-        :param context: An instance of the request context.
-        :param identity: The UUID, name or short-id of the event.
-        :param project_safe: A boolean specifying that only events from the
-                             same project as the requesting one are qualified
-                             to be returned.
-        :return: A dictionary containing the details of the event.
-        """
-        event = None
-        if uuidutils.is_uuid_like(identity):
-            event = event_obj.Event.get(context, identity,
-                                        project_safe=project_safe)
-        if not event:
-            event = event_obj.Event.get_by_short_id(context, identity,
-                                                    project_safe=project_safe)
-        if not event:
-            raise exception.ResourceNotFound(type='event', id=identity)
-
-        return event
-
-    @request_context2
-    def event_list2(self, ctx, req):
+    @request_context
+    def event_list(self, ctx, req):
         """List event records matching the specified criteria.
 
         :param ctx: An instance of the request context.
@@ -2458,8 +2330,8 @@ class EngineService(service.Service):
 
         return results
 
-    @request_context2
-    def event_get2(self, context, req):
+    @request_context
+    def event_get(self, ctx, req):
         """Retrieve the event specified.
 
         :param ctx: An instance of the request context.
@@ -2469,7 +2341,7 @@ class EngineService(service.Service):
                  event could be found.
         """
 
-        db_event = self.event_find(context, req.identity)
+        db_event = event_obj.Event.find(ctx, req.identity)
         evt = db_event.as_dict()
         level = utils.level_from_number(evt['level'])
         evt['level'] = level

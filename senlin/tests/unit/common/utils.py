@@ -49,7 +49,7 @@ def reset_dummy_db():
 
 def dummy_context(user=None, project=None, password=None, roles=None,
                   user_id=None, trust_id=None, region_name=None, domain=None,
-                  is_admin=False):
+                  is_admin=False, api_version=None):
 
     roles = roles or []
     return context.RequestContext.from_dict({
@@ -63,7 +63,8 @@ def dummy_context(user=None, project=None, password=None, roles=None,
         'auth_token': 'abcd1234',
         'trust_id': trust_id or 'trust_id',
         'region_name': region_name or 'region_one',
-        'domain': domain or ''
+        'domain': domain or '',
+        'api_version': api_version or '1.2',
     })
 
 
@@ -84,7 +85,7 @@ def create_profile(context, profile_id):
     return objects.Profile.create(context, values)
 
 
-def create_cluster(context, cluster_id, profile_id):
+def create_cluster(context, cluster_id, profile_id, **kwargs):
     values = {
         'id': cluster_id,
         'profile_id': profile_id,
@@ -98,7 +99,7 @@ def create_cluster(context, cluster_id, profile_id):
         'user': context.user,
         'project': context.project,
     }
-
+    values.update(kwargs)
     return objects.Cluster.create(context, values)
 
 

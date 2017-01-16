@@ -12,6 +12,10 @@
 
 """Receiver object."""
 
+from oslo_utils import uuidutils
+
+from senlin.common import exception
+from senlin.common import utils
 from senlin.db import api as db_api
 from senlin.objects import base
 from senlin.objects import fields
@@ -43,6 +47,32 @@ class Receiver(base.SenlinObject, base.VersionedObjectDictCompat):
         return cls._from_db_object(context, cls(context), obj)
 
     @classmethod
+    def find(cls, context, identity, **kwargs):
+        """Find a receiver with the given identity.
+
+        :param context: An instance of the request context.
+        :param identity: The UUID, name or short-id of a receiver.
+        :param project_safe: A boolean indicating whether receiver from other
+                             projects other than the requesting one can be
+                             returned.
+        :return: A DB object of receiver or an exception `ResourceNotFound`
+                 if no matching receiver is found.
+        """
+        if uuidutils.is_uuid_like(identity):
+            receiver = cls.get(context, identity, **kwargs)
+            if not receiver:
+                receiver = cls.get_by_name(context, identity, **kwargs)
+        else:
+            receiver = cls.get_by_name(context, identity, **kwargs)
+            if not receiver:
+                receiver = cls.get_by_short_id(context, identity, **kwargs)
+
+        if not receiver:
+            raise exception.ResourceNotFound(type='receiver', id=identity)
+
+        return receiver
+
+    @classmethod
     def get(cls, context, receiver_id, **kwargs):
         obj = db_api.receiver_get(context, receiver_id, **kwargs)
         return cls._from_db_object(context, cls(), obj)
@@ -59,8 +89,27 @@ class Receiver(base.SenlinObject, base.VersionedObjectDictCompat):
 
     @classmethod
     def get_all(cls, context, **kwargs):
-        return db_api.receiver_get_all(context, **kwargs)
+        objs = db_api.receiver_get_all(context, **kwargs)
+        return [cls._from_db_object(context, cls(), obj) for obj in objs]
 
     @classmethod
     def delete(cls, context, receiver_id):
         db_api.receiver_delete(context, receiver_id)
+
+    def to_dict(self):
+        receiver_dict = {
+            'id': self.id,
+            'name': self.name,
+            'type': self.type,
+            'user': self.user,
+            'project': self.project,
+            'domain': self.domain,
+            'created_at': utils.isotime(self.created_at),
+            'updated_at': utils.isotime(self.updated_at),
+            'cluster_id': self.cluster_id,
+            'actor': self.actor,
+            'action': self.action,
+            'params': self.params,
+            'channel': self.channel,
+        }
+        return receiver_dict

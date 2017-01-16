@@ -57,6 +57,10 @@ class API(wsgi.Router):
                                "/profile-types/{type_name}",
                                action="get",
                                conditions={'method': 'GET'})
+            sub_mapper.connect("profile_type_ops",
+                               "/profile-types/{type_name}/ops",
+                               action="ops",
+                               conditions={'method': 'GET'})
 
         # Profiles
         res = wsgi.Resource(profiles.ProfileController(conf))
@@ -167,6 +171,11 @@ class API(wsgi.Router):
                                action="delete",
                                conditions={'method': 'DELETE'},
                                success=202)
+            sub_mapper.connect("cluster_operation",
+                               "/clusters/{cluster_id}/ops",
+                               action="operation",
+                               conditions={'method': 'POST'},
+                               success=202)
 
         # Nodes
         res = wsgi.Resource(nodes.NodeController(conf))
@@ -199,6 +208,11 @@ class API(wsgi.Router):
                                "/nodes/{node_id}",
                                action="delete",
                                conditions={'method': 'DELETE'},
+                               success=202)
+            sub_mapper.connect("node_operation",
+                               "/nodes/{node_id}/ops",
+                               action="operation",
+                               conditions={'method': 'POST'},
                                success=202)
 
         # Cluster Policies

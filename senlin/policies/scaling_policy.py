@@ -10,9 +10,10 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from oslo_config import cfg
+
 from senlin.common import constraints
 from senlin.common import consts
-from senlin.common import exception
 from senlin.common.i18n import _
 from senlin.common import scaleutils as su
 from senlin.common import schema
@@ -20,6 +21,9 @@ from senlin.common import utils
 from senlin.objects import cluster as co
 from senlin.objects import node as no
 from senlin.policies import base
+
+
+CONF = cfg.CONF
 
 
 class ScalingPolicy(base.Policy):
@@ -164,26 +168,28 @@ class ScalingPolicy(base.Policy):
         """
 
         # Use action input if count is provided
-        count = action.inputs.get('count', None)
+        count_value = action.inputs.get('count', None)
         current = no.Node.count_by_cluster(action.context, cluster_id)
-        if count is None:
+        if count_value is None:
             # count not specified, calculate it
-            count = self._calculate_adjustment_count(current)
+            count_value = self._calculate_adjustment_count(current)
 
         # Count must be positive value
-        try:
-            count = utils.parse_int_param('count', count, allow_zero=False)
-        except exception.InvalidParameter:
+        success, count = utils.get_positive_int(count_value)
+        if not success:
             action.data.update({
                 'status': base.CHECK_ERROR,
                 'reason': _("Invalid count (%(c)s) for action '%(a)s'."
-                            ) % {'c': count, 'a': action.action}
+                            ) % {'c': count_value, 'a': action.action}
             })
             action.store(action.context)
             return
 
         # Check size constraints
         cluster = co.Cluster.get(action.context, cluster_id)
+        max_size = cluster.max_size
+        if max_size == -1:
+            max_size = cfg.CONF.max_nodes_per_cluster
         if action.action == consts.CLUSTER_SCALE_IN:
             if self.best_effort:
                 count = min(count, current - cluster.min_size)
@@ -191,7 +197,7 @@ class ScalingPolicy(base.Policy):
                                           strict=not self.best_effort)
         else:
             if self.best_effort:
-                count = min(count, cluster.max_size - current)
+                count = min(count, max_size - current)
             result = su.check_size_params(cluster, current + count,
                                           strict=not self.best_effort)
 

@@ -83,6 +83,8 @@ class DBAPINodeTest(base.SenlinTestCase):
         admin_ctx = utils.dummy_context(project='a_different_project',
                                         is_admin=True)
         node = db_api.node_get(admin_ctx, res.id, project_safe=True)
+        self.assertIsNone(node)
+        node = db_api.node_get(admin_ctx, res.id, project_safe=False)
         self.assertIsNotNone(node)
 
     def test_node_get_by_name(self):
@@ -150,6 +152,9 @@ class DBAPINodeTest(base.SenlinTestCase):
                                         is_admin=True)
         res = db_api.node_get_by_short_id(admin_ctx, node_id[:11],
                                           project_safe=True)
+        self.assertIsNone(res)
+        res = db_api.node_get_by_short_id(admin_ctx, node_id[:11],
+                                          project_safe=False)
         self.assertIsNotNone(res)
 
     def test_node_get_all(self):
@@ -162,21 +167,64 @@ class DBAPINodeTest(base.SenlinTestCase):
         names = [node.name for node in nodes]
         [self.assertIn(val['name'], names) for val in values]
 
-    def test_node_add_dependents(self):
-        node_id = 'container_host'
+    def test_node_add_node_dependents(self):
+        node_id = 'host_node'
         node = shared.create_node(self.ctx, None, self.profile,
                                   id=node_id, name='node-1')
-        db_api.node_add_dependents(self.ctx, node_id, 'container1')
+        db_api.node_add_dependents(self.ctx, node_id, 'NODE1')
         node = db_api.node_get(self.ctx, node_id)
-        container = node.dependents['containers']
-        self.assertEqual(['container1'], container)
+        nodes = node.dependents['nodes']
+        self.assertEqual(['NODE1'], nodes)
 
-    def test_node_remove_dependents(self):
-        node_id = 'container_host'
-        dependents = {'containers': ['container1']}
+        db_api.node_add_dependents(self.ctx, node_id, 'NODE2')
+        new_node = db_api.node_get(self.ctx, node_id)
+        nodes = new_node.dependents['nodes']
+        self.assertEqual(['NODE1', 'NODE2'], nodes)
+
+    def test_node_add_profile_dependents(self):
+        node_id = 'host_node'
+        new_profile = shared.create_profile(self.ctx)
+        node = shared.create_node(self.ctx, None, self.profile,
+                                  id=node_id, name='node-1')
+        db_api.node_add_dependents(self.ctx, node_id, new_profile.id,
+                                   'profile')
+        node = db_api.node_get(self.ctx, node_id)
+        nodes = node.dependents['profiles']
+        self.assertEqual([new_profile.id], nodes)
+
+        new_profile_1 = shared.create_profile(self.ctx)
+        db_api.node_add_dependents(self.ctx, node_id, new_profile_1.id,
+                                   'profile')
+        new_node = db_api.node_get(self.ctx, node_id)
+        nodes = new_node.dependents['profiles']
+        self.assertEqual([new_profile.id, new_profile_1.id], nodes)
+
+    def test_node_remove_node_dependents(self):
+        node_id = 'host_node'
+        dependents = {'nodes': ['NODE1', 'NODE2']}
         node = shared.create_node(self.ctx, None, self.profile,
                                   id=node_id, dependents=dependents)
-        db_api.node_remove_dependents(self.ctx, node_id, 'container1')
+        db_api.node_remove_dependents(self.ctx, node_id, 'NODE1')
+        node = db_api.node_get(self.ctx, node_id)
+        dependents = node.dependents
+        self.assertEqual({'nodes': ['NODE2']}, dependents)
+
+        db_api.node_remove_dependents(self.ctx, node_id, 'NODE2', 'node')
+        node = db_api.node_get(self.ctx, node_id)
+        dependents = node.dependents
+        self.assertEqual({}, dependents)
+
+    def test_node_remove_profile_dependents(self):
+        node_id = 'host_node'
+        dependents = {'profiles': ['P1', 'P2']}
+        node = shared.create_node(self.ctx, None, self.profile,
+                                  id=node_id, dependents=dependents)
+        db_api.node_remove_dependents(self.ctx, node_id, 'P1', 'profile')
+        node = db_api.node_get(self.ctx, node_id)
+        dependents = node.dependents
+        self.assertEqual({'profiles': ['P2']}, dependents)
+
+        db_api.node_remove_dependents(self.ctx, node_id, 'P2', 'profile')
         node = db_api.node_get(self.ctx, node_id)
         dependents = node.dependents
         self.assertEqual({}, dependents)

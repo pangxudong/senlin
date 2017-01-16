@@ -368,8 +368,8 @@ def action_acquire(context, action_id, owner, timestamp):
     return IMPL.action_acquire(context, action_id, owner, timestamp)
 
 
-def action_acquire_1st_ready(context, owner, timestamp):
-    return IMPL.action_acquire_1st_ready(context, owner, timestamp)
+def action_acquire_random_ready(context, owner, timestamp):
+    return IMPL.action_acquire_random_ready(context, owner, timestamp)
 
 
 def action_abandon(context, action_id):
@@ -443,6 +443,10 @@ def service_get(context, service_id):
 
 def service_get_all(context):
     return IMPL.service_get_all(context)
+
+
+def gc_by_engine(context, engine_id):
+    return IMPL.gc_by_engine(context, engine_id)
 
 
 def registry_create(context, cluster_id, check_type, interval, params,

@@ -285,10 +285,20 @@ class TestClusterAddNodes(test_base.SenlinTestCase):
 class TestClusterDelNodes(test_base.SenlinTestCase):
 
     def test_init(self):
-        sot = clusters.ClusterDelNodesRequest(identity='foo', nodes=['abc'])
+        sot = clusters.ClusterDelNodesRequest(identity='foo', nodes=['abc'],
+                                              destroy_after_deletion=True)
 
         self.assertEqual('foo', sot.identity)
         self.assertEqual(['abc'], sot.nodes)
+        self.assertTrue(sot.destroy_after_deletion)
+
+    def test_init_without_destroy(self):
+        sot = clusters.ClusterDelNodesRequest(identity='foo', nodes=['abc'],
+                                              destroy_after_deletion=False)
+
+        self.assertEqual('foo', sot.identity)
+        self.assertEqual(['abc'], sot.nodes)
+        self.assertFalse(sot.destroy_after_deletion)
 
     def test_init_failed(self):
         ex = self.assertRaises(ValueError,
@@ -521,6 +531,31 @@ class TestClusterCollect(test_base.SenlinTestCase):
 
         self.assertEqual('foo', sot.identity)
         self.assertEqual('path/to/attr', sot.path)
+
+
+class TestClusterOperation(test_base.SenlinTestCase):
+
+    def test_init(self):
+        sot = clusters.ClusterOperationRequest(
+            identity='foo', filters={'role': 'slave'},
+            operation='dance', params={'style': 'tango'})
+
+        self.assertEqual('foo', sot.identity)
+        self.assertEqual('dance', sot.operation)
+        self.assertEqual({'role': 'slave'}, sot.filters)
+        self.assertEqual({'style': 'tango'}, sot.params)
+
+    def test_init_minimal(self):
+        sot = clusters.ClusterOperationRequest(identity='foo',
+                                               operation='dance')
+
+        self.assertEqual('foo', sot.identity)
+        self.assertEqual('dance', sot.operation)
+        self.assertFalse(sot.obj_attr_is_set('filters'))
+        self.assertFalse(sot.obj_attr_is_set('params'))
+        sot.obj_set_defaults()
+        self.assertEqual({}, sot.filters)
+        self.assertEqual({}, sot.params)
 
 
 class TestClusterDelete(test_base.SenlinTestCase):

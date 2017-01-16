@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -50,17 +48,14 @@ class FaultWrapper(wsgi.Middleware):
         'Forbidden': webob.exc.HTTPForbidden,
         'InternalError': webob.exc.HTTPInternalServerError,
         'InvalidGlobalAPIVersion': webob.exc.HTTPNotAcceptable,
-        'InvalidParameter': webob.exc.HTTPBadRequest,
-        'InvalidSchemaError': webob.exc.HTTPBadRequest,
+        'InvalidSpec': webob.exc.HTTPBadRequest,
         'MethodVersionNotFound': webob.exc.HTTPBadRequest,
         'MultipleChoices': webob.exc.HTTPBadRequest,
         'NodeNotOrphan': webob.exc.HTTPConflict,
         'PolicyBindingNotFound': webob.exc.HTTPNotFound,
-        'ProfileTypeNotMatch': webob.exc.HTTPBadRequest,
         'RequestLimitExceeded': webob.exc.HTTPBadRequest,
         'ResourceInUse': webob.exc.HTTPConflict,
         'ResourceNotFound': webob.exc.HTTPNotFound,
-        'SpecValidationFailed': webob.exc.HTTPBadRequest,
     }
 
     def _map_exception_to_error(self, class_exception):

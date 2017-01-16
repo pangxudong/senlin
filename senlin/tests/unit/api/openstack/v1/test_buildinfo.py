@@ -16,6 +16,7 @@ import six
 from senlin.api.middleware import fault
 from senlin.api.openstack.v1 import build_info
 from senlin.common import policy
+from senlin.objects.requests import build_info as vorb
 from senlin.rpc import client as rpc_client
 from senlin.tests.unit.api import shared
 from senlin.tests.unit.common import base
@@ -45,7 +46,9 @@ class BuildInfoControllerTest(shared.ControllerTest, base.SenlinTestCase):
         self.assertEqual('12.34', response['engine']['revision'])
 
         mock_call.assert_called_once_with(req.context,
-                                          ('get_revision', {}))
+                                          'get_revision', mock.ANY)
+        request = mock_call.call_args[0][2]
+        self.assertIsInstance(request, vorb.GetRevisionRequest)
 
     @mock.patch.object(build_info.cfg, 'CONF')
     @mock.patch.object(rpc_client.EngineClient, 'call')
@@ -60,7 +63,9 @@ class BuildInfoControllerTest(shared.ControllerTest, base.SenlinTestCase):
         response = result['build_info']
         self.assertEqual('test', response['api']['revision'])
         mock_call.assert_called_once_with(req.context,
-                                          ('get_revision', {}))
+                                          'get_revision', mock.ANY)
+        request = mock_call.call_args[0][2]
+        self.assertIsInstance(request, vorb.GetRevisionRequest)
 
     def test_build_info_err_denied_policy(self, mock_enforce):
         self._mock_enforce_setup(mock_enforce, 'build_info', False)

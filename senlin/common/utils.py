@@ -28,8 +28,7 @@ from six.moves import urllib
 
 from senlin.common import consts
 from senlin.common import exception
-from senlin.common.i18n import _
-from senlin.common.i18n import _LI
+from senlin.common.i18n import _, _LI
 from senlin.objects import service as service_obj
 
 cfg.CONF.import_opt('max_response_size', 'senlin.common.config')
@@ -43,58 +42,18 @@ class URLFetchError(exception.Error, IOError):
     pass
 
 
-def parse_int_param(name, value, allow_zero=True, allow_negative=False,
-                    lower_limit=None, upper_limit=None):
-    if value is None:
-        return None
+def get_positive_int(v):
+    """Util function converting/checking a value of positive integer.
 
-    if value in ('0', 0):
-        if allow_zero:
-            return int(value)
-        raise exception.InvalidParameter(name=name, value=value)
-
-    try:
-        result = int(value)
-    except (TypeError, ValueError):
-        raise exception.InvalidParameter(name=name, value=value)
-    else:
-        if any([(allow_negative is False and result < 0),
-                (lower_limit and result < lower_limit),
-                (upper_limit and result > upper_limit)]):
-            raise exception.InvalidParameter(name=name, value=value)
-
-    return result
-
-
-def parse_bool_param(name, value):
-    if str(value).lower() not in ('true', 'false'):
-        raise exception.InvalidParameter(name=name, value=str(value))
-
-    return strutils.bool_from_string(value, strict=True)
-
-
-def validate_sort_param(value, whitelist):
-    """Validate a string value and see if it is a valid sort param.
-
-    :param value: A string as the input which should be one of the following
-                  formats:
-                  - 'key1,key2,key3'
-                  - 'key1:asc,key2,key3:desc'
-                  - 'key1:asc,key2:asc,key3:desc'
-    :param whitelist: A list of permitted sorting keys.
-    :return: None if validation succeeds or an exception of `InvalidParameter`
-             otherwise.
+    :param v: A value to be checked.
+    :returns: (b, v) where v is (converted) value if bool is True.
+              b is False if the value fails validation.
     """
-
-    if value is None:
-        return None
-
-    for s in value.split(','):
-        s_key, _sep, s_dir = s.partition(':')
-        if not s_key or s_key not in whitelist:
-            raise exception.InvalidParameter(name='sort key', value=s_key)
-        if s_dir and s_dir not in ('asc', 'desc'):
-            raise exception.InvalidParameter(name='sort dir', value=s_dir)
+    if strutils.is_int_like(v):
+        count = int(v)
+        if count > 0:
+            return True, count
+    return False, 0
 
 
 def parse_level_values(values):

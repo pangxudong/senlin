@@ -23,8 +23,7 @@ import sys
 from oslo_log import log as logging
 import six
 
-from senlin.common.i18n import _
-from senlin.common.i18n import _LE
+from senlin.common.i18n import _, _LE
 
 _FATAL_EXCEPTION_FORMAT_ERRORS = False
 LOG = logging.getLogger(__name__)
@@ -104,10 +103,6 @@ class MultipleChoices(SenlinException):
                 "Please be more specific.")
 
 
-class InvalidParameter(SenlinException):
-    msg_fmt = _("Invalid value '%(value)s' specified for '%(name)s'")
-
-
 class ResourceNotFound(SenlinException):
     """Generic exception for resource not found.
 
@@ -131,10 +126,6 @@ class ResourceInUse(SenlinException):
     'action', 'event' and so on.
     """
     msg_fmt = _("The %(type)s %(id)s cannot be deleted: %(reason)s.")
-
-
-class ProfileTypeNotMatch(SenlinException):
-    msg_fmt = _("%(message)s")
 
 
 class ProfileNotSpecified(SenlinException):
@@ -162,11 +153,7 @@ class PolicyTypeConflict(SenlinException):
     msg_fmt = _("The policy with type (%(policy_type)s) already exists.")
 
 
-class InvalidSchemaError(SenlinException):
-    msg_fmt = _("%(message)s")
-
-
-class SpecValidationFailed(SenlinException):
+class InvalidSpec(SenlinException):
     msg_fmt = _("%(message)s")
 
 
@@ -200,7 +187,7 @@ class NodeNotOrphan(SenlinException):
 class InternalError(SenlinException):
     """A base class for internal exceptions in senlin.
 
-    The internal exception classes which inherit from :class:`InternalError`
+    The internal exception classes which inherit from :class:`SenlinException`
     class should be translated to a user facing exception type if need to be
     made user visible.
     """
@@ -260,11 +247,11 @@ class EResourceOperation(InternalError):
     msg_fmt = _("Failed in %(op)s %(type)s %(id)s: %(message)s.")
 
 
-class InvalidPlugin(InternalError):
+class ESchema(InternalError):
     msg_fmt = _("%(message)s")
 
 
-class InvalidSpec(InternalError):
+class InvalidPlugin(InternalError):
     msg_fmt = _("%(message)s")
 
 

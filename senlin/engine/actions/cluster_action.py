@@ -18,9 +18,7 @@ from oslo_utils import timeutils
 from osprofiler import profiler
 
 from senlin.common import consts
-from senlin.common import exception
-from senlin.common.i18n import _
-from senlin.common.i18n import _LI
+from senlin.common.i18n import _, _LI
 from senlin.common import scaleutils
 from senlin.common import utils
 from senlin.engine.actions import base
@@ -53,9 +51,9 @@ class ClusterAction(base.Action):
         super(ClusterAction, self).__init__(target, action, context, **kwargs)
 
         try:
-            self.cluster = cluster_mod.Cluster.load(self.context, self.target)
+            self.entity = cluster_mod.Cluster.load(self.context, self.target)
         except Exception:
-            self.cluster = None
+            self.entity = None
 
     def _sleep(self, period):
         if period:
@@ -110,22 +108,23 @@ class ClusterAction(base.Action):
 
         nodes = []
         child = []
+        # conunt >= 1
         for m in range(count):
-            index = co.Cluster.get_next_index(self.context, self.cluster.id)
+            index = co.Cluster.get_next_index(self.context, self.entity.id)
             kwargs = {
                 'index': index,
                 'metadata': {},
-                'user': self.cluster.user,
-                'project': self.cluster.project,
-                'domain': self.cluster.domain,
+                'user': self.entity.user,
+                'project': self.entity.project,
+                'domain': self.entity.domain,
             }
             if placement is not None:
                 # We assume placement is a list
                 kwargs['data'] = {'placement': placement['placements'][m]}
 
-            name = 'node-%s-%003d' % (self.cluster.id[:8], index)
-            node = node_mod.Node(name, self.cluster.profile_id,
-                                 self.cluster.id, context=self.context,
+            name = 'node-%s-%003d' % (self.entity.id[:8], index)
+            node = node_mod.Node(name, self.entity.profile_id,
+                                 self.entity.id, context=self.context,
                                  **kwargs)
 
             node.store(self.context)
@@ -133,37 +132,33 @@ class ClusterAction(base.Action):
 
             kwargs = {
                 'name': 'node_create_%s' % node.id[:8],
-                'cause': base.CAUSE_DERIVED,
+                'cause': consts.CAUSE_DERIVED,
             }
-
             action_id = base.Action.create(self.context, node.id,
                                            consts.NODE_CREATE, **kwargs)
             child.append(action_id)
 
-        if child:
-            # Build dependency and make the new action ready
-            dobj.Dependency.create(self.context, [a for a in child], self.id)
-            for cid in child:
-                ao.Action.update(self.context, cid,
-                                 {'status': base.Action.READY})
-            dispatcher.start_action()
+        # Build dependency and make the new action ready
+        dobj.Dependency.create(self.context, [a for a in child], self.id)
+        for cid in child:
+            ao.Action.update(self.context, cid,
+                             {'status': base.Action.READY})
+        dispatcher.start_action()
 
-            # Wait for cluster creation to complete
-            res, reason = self._wait_for_dependents()
-            if res == self.RES_OK:
-                nodes_added = [n.id for n in nodes]
-                self.outputs['nodes_added'] = nodes_added
-                creation = self.data.get('creation', {})
-                creation['nodes'] = nodes_added
-                self.data['creation'] = creation
-                for node in nodes:
-                    self.cluster.add_node(node)
-            else:
-                reason = _('Failed in creating nodes.')
+        # Wait for cluster creation to complete
+        res, reason = self._wait_for_dependents()
+        if res == self.RES_OK:
+            nodes_added = [n.id for n in nodes]
+            self.outputs['nodes_added'] = nodes_added
+            creation = self.data.get('creation', {})
+            creation['nodes'] = nodes_added
+            self.data['creation'] = creation
+            for node in nodes:
+                self.entity.add_node(node)
+        else:
+            reason = _('Failed in creating nodes.')
 
-            return res, reason
-
-        return self.RES_OK, ''
+        return res, reason
 
     @profiler.trace('ClusterAction.do_create', hide_args=False)
     def do_create(self):
@@ -171,27 +166,27 @@ class ClusterAction(base.Action):
 
         :returns: A tuple containing the result and the corresponding reason.
         """
-        res = self.cluster.do_create(self.context)
+        res = self.entity.do_create(self.context)
 
         if not res:
             reason = _('Cluster creation failed.')
-            self.cluster.set_status(self.context, consts.CS_ERROR, reason)
+            self.entity.set_status(self.context, consts.CS_ERROR, reason)
             return self.RES_ERROR, reason
 
-        result, reason = self._create_nodes(self.cluster.desired_capacity)
+        result, reason = self._create_nodes(self.entity.desired_capacity)
 
         params = {}
         if result == self.RES_OK:
             reason = _('Cluster creation succeeded.')
             params = {'created_at': timeutils.utcnow(True)}
-        self.cluster.eval_status(self.context, consts.CLUSTER_CREATE, **params)
+        self.entity.eval_status(self.context, consts.CLUSTER_CREATE, **params)
 
         return result, reason
 
     def _update_nodes(self, profile_id, nodes_obj):
         # Get batching policy data if any
         fmt = _LI("Updating cluster '%(cluster)s': profile='%(profile)s'.")
-        LOG.info(fmt, {'cluster': self.cluster.id, 'profile': profile_id})
+        LOG.info(fmt, {'cluster': self.entity.id, 'profile': profile_id})
         pause_time = 0
         plan = []
 
@@ -202,7 +197,7 @@ class ClusterAction(base.Action):
         else:
             pause_time = 0
             nodes_list = []
-            for node in self.cluster.nodes:
+            for node in self.entity.nodes:
                 nodes_list.append(node.id)
             plan.append(set(nodes_list))
 
@@ -214,7 +209,7 @@ class ClusterAction(base.Action):
             for node in nodes:
                 kwargs = {
                     'name': 'node_update_%s' % node[:8],
-                    'cause': base.CAUSE_DERIVED,
+                    'cause': consts.CAUSE_DERIVED,
                     'inputs': {
                         'new_profile_id': profile_id,
                     },
@@ -235,17 +230,17 @@ class ClusterAction(base.Action):
                 child = []
                 result, new_reason = self._wait_for_dependents()
                 if result != self.RES_OK:
-                    self.cluster.eval_status(self.context,
-                                             consts.CLUSTER_UPDATE)
+                    self.entity.eval_status(self.context,
+                                            consts.CLUSTER_UPDATE)
                     return result, _('Failed in updating nodes.')
                 # pause time
                 if pause_time != 0:
                     self._sleep(pause_time)
 
-        self.cluster.profile_id = profile_id
-        self.cluster.eval_status(self.context, consts.CLUSTER_UPDATE,
-                                 profile_id=profile_id,
-                                 updated_at=timeutils.utcnow(True))
+        self.entity.profile_id = profile_id
+        self.entity.eval_status(self.context, consts.CLUSTER_UPDATE,
+                                profile_id=profile_id,
+                                updated_at=timeutils.utcnow(True))
         return self.RES_OK, 'Cluster update completed.'
 
     @profiler.trace('ClusterAction.do_update', hide_args=False)
@@ -254,10 +249,10 @@ class ClusterAction(base.Action):
 
         :returns: A tuple consisting the result and the corresponding reason.
         """
-        res = self.cluster.do_update(self.context)
+        res = self.entity.do_update(self.context)
         if not res:
             reason = _('Cluster update failed.')
-            self.cluster.set_status(self.context, consts.CS_ERROR, reason)
+            self.entity.set_status(self.context, consts.CS_ERROR, reason)
             return self.RES_ERROR, reason
 
         name = self.inputs.get('name')
@@ -266,21 +261,21 @@ class ClusterAction(base.Action):
         profile_id = self.inputs.get('new_profile_id')
 
         if name is not None:
-            self.cluster.name = name
+            self.entity.name = name
         if metadata is not None:
-            self.cluster.metadata = metadata
+            self.entity.metadata = metadata
         if timeout is not None:
-            self.cluster.timeout = timeout
-        self.cluster.store(self.context)
+            self.entity.timeout = timeout
+        self.entity.store(self.context)
 
         reason = _('Cluster update completed.')
         if profile_id is None:
-            self.cluster.eval_status(self.context, consts.CLUSTER_UPDATE,
-                                     updated_at=timeutils.utcnow(True))
+            self.entity.eval_status(self.context, consts.CLUSTER_UPDATE,
+                                    updated_at=timeutils.utcnow(True))
             return self.RES_OK, reason
 
         # Update nodes with new profile
-        result, reason = self._update_nodes(profile_id, self.cluster.nodes)
+        result, reason = self._update_nodes(profile_id, self.entity.nodes)
         return result, reason
 
     def _delete_nodes(self, node_ids):
@@ -289,14 +284,14 @@ class ClusterAction(base.Action):
         pd = self.data.get('deletion', None)
         if pd is not None:
             destroy = pd.get('destroy_after_deletion', True)
-            if not destroy:
+            if destroy is False:
                 action_name = consts.NODE_LEAVE
 
         child = []
         for node_id in node_ids:
             kwargs = {
                 'name': 'node_delete_%s' % node_id[:8],
-                'cause': base.CAUSE_DERIVED,
+                'cause': consts.CAUSE_DERIVED,
             }
             action_id = base.Action.create(self.context, node_id, action_name,
                                            **kwargs)
@@ -314,7 +309,7 @@ class ClusterAction(base.Action):
             if res == self.RES_OK:
                 self.outputs['nodes_removed'] = node_ids
                 for node_id in node_ids:
-                    self.cluster.remove_node(node_id)
+                    self.entity.remove_node(node_id)
             else:
                 reason = _('Failed in deleting nodes.')
 
@@ -331,8 +326,8 @@ class ClusterAction(base.Action):
         pause = 0
         batch = 0
         reason = _('Deletion in progress.')
-        self.cluster.set_status(self.context, consts.CS_DELETING, reason)
-        node_ids = [node.id for node in self.cluster.nodes]
+        self.entity.set_status(self.context, consts.CS_DELETING, reason)
+        node_ids = [node.id for node in self.entity.nodes]
 
         # For cluster delete, we delete the nodes
         data = {
@@ -357,13 +352,13 @@ class ClusterAction(base.Action):
                 end = start + batch
                 result, reason = self._delete_nodes(node_ids[start:end])
                 if result != self.RES_OK:
-                    self.cluster.eval_status(self.context,
-                                             consts.CLUSTER_DELETE)
+                    self.entity.eval_status(self.context,
+                                            consts.CLUSTER_DELETE)
                     return result, reason
 
-        res = self.cluster.do_delete(self.context)
+        res = self.entity.do_delete(self.context)
         if not res:
-            self.cluster.eval_status(self.context, consts.CLUSTER_DELETE)
+            self.entity.eval_status(self.context, consts.CLUSTER_DELETE)
             return self.RES_ERROR, _('Cannot delete cluster object.')
 
         return self.RES_OK, reason
@@ -403,7 +398,7 @@ class ClusterAction(base.Action):
         # check the size constraint
         current = no.Node.count_by_cluster(self.context, self.target)
         desired = current + len(node_ids)
-        res = scaleutils.check_size_params(self.cluster, desired, None,
+        res = scaleutils.check_size_params(self.entity, desired, None,
                                            None, True)
         if res:
             return self.RES_ERROR, res
@@ -413,7 +408,7 @@ class ClusterAction(base.Action):
             nid = node.id
             kwargs = {
                 'name': 'node_join_%s' % nid[:8],
-                'cause': base.CAUSE_DERIVED,
+                'cause': consts.CAUSE_DERIVED,
                 'inputs': {'cluster_id': self.target},
             }
             action_id = base.Action.create(self.context, nid, consts.NODE_JOIN,
@@ -432,15 +427,15 @@ class ClusterAction(base.Action):
         if result != self.RES_OK:
             reason = new_reason
         else:
-            self.cluster.eval_status(self.context, consts.CLUSTER_ADD_NODES,
-                                     desired_capacity=desired)
+            self.entity.eval_status(self.context, consts.CLUSTER_ADD_NODES,
+                                    desired_capacity=desired)
             self.outputs['nodes_added'] = node_ids
             creation = self.data.get('creation', {})
             creation['nodes'] = node_ids
             self.data['creation'] = creation
             for node in nodes:
                 obj = node_mod.Node.load(self.context, db_node=node)
-                self.cluster.add_node(obj)
+                self.entity.add_node(obj)
 
         return result, reason
 
@@ -451,11 +446,12 @@ class ClusterAction(base.Action):
         :returns: A tuple containing the result and the corresponding reason.
         """
         # Use policy decision if any, or fall back to defaults
-        destroy_after_deletion = False
+        destroy_after_deletion = self.inputs.get('destroy_after_deletion',
+                                                 False)
         grace_period = 0
         reduce_desired_capacity = True
         pd = self.data.get('deletion', None)
-        if pd:
+        if pd is not None:
             destroy_after_deletion = pd.get('destroy_after_deletion', False)
             grace_period = pd.get('grace_period', 0)
             reduce_desired_capacity = pd.get('reduce_desired_capacity', True)
@@ -477,14 +473,15 @@ class ClusterAction(base.Action):
 
             # The return value is None if node not found
             if not node:
-                errors.append(_('Node %s is not found.') % node_id)
+                errors.append(node_id)
                 continue
 
             if ((not node.cluster_id) or (node.cluster_id != self.target)):
                 nodes.remove(node_id)
 
         if len(errors) > 0:
-            return self.RES_ERROR, ''.join(errors)
+            msg = _("Nodes not found: %s.") % errors
+            return self.RES_ERROR, msg
 
         reason = _('Completed deleting nodes.')
         if len(nodes) == 0:
@@ -493,7 +490,7 @@ class ClusterAction(base.Action):
         # check the size constraint
         current = no.Node.count_by_cluster(self.context, self.target)
         desired = current - len(nodes)
-        res = scaleutils.check_size_params(self.cluster, desired, None,
+        res = scaleutils.check_size_params(self.entity, desired, None,
                                            None, True)
         if res:
             return self.RES_ERROR, res
@@ -508,8 +505,8 @@ class ClusterAction(base.Action):
         if reduce_desired_capacity:
             params['desired_capacity'] = desired
 
-        self.cluster.eval_status(self.context,
-                                 consts.CLUSTER_DEL_NODES, **params)
+        self.entity.eval_status(self.context,
+                                consts.CLUSTER_DEL_NODES, **params)
 
         return result, reason
 
@@ -563,7 +560,7 @@ class ClusterAction(base.Action):
         children = []
         for (original, replacement) in node_dict.items():
             kwargs = {
-                'cause': base.CAUSE_DERIVED,
+                'cause': consts.CAUSE_DERIVED,
             }
 
             # node_leave action
@@ -598,10 +595,10 @@ class ClusterAction(base.Action):
                 reason = new_reason
             else:
                 for n in range(len(original_nodes)):
-                    self.cluster.remove_node(original_nodes[n])
-                    self.cluster.add_node(replacement_nodes[n])
+                    self.entity.remove_node(original_nodes[n])
+                    self.entity.add_node(replacement_nodes[n])
 
-        self.cluster.eval_status(self.context, consts.CLUSTER_REPLACE_NODES)
+        self.entity.eval_status(self.context, consts.CLUSTER_REPLACE_NODES)
         return result, reason
 
     @profiler.trace('ClusterAction.do_check', hide_args=False)
@@ -610,17 +607,17 @@ class ClusterAction(base.Action):
 
         :returns: A tuple containing the result and the corresponding reason.
         """
-        self.cluster.do_check(self.context)
+        self.entity.do_check(self.context)
 
         child = []
         res = self.RES_OK
         reason = _('Cluster checking completed.')
-        for node in self.cluster.nodes:
+        for node in self.entity.nodes:
             node_id = node.id
             action_id = base.Action.create(
                 self.context, node_id, consts.NODE_CHECK,
                 name='node_check_%s' % node_id[:8],
-                cause=base.CAUSE_DERIVED,
+                cause=consts.CAUSE_DERIVED,
             )
             child.append(action_id)
 
@@ -636,7 +633,7 @@ class ClusterAction(base.Action):
             if res != self.RES_OK:
                 reason = new_reason
 
-        self.cluster.eval_status(self.context, consts.CLUSTER_CHECK)
+        self.entity.eval_status(self.context, consts.CLUSTER_CHECK)
         return res, reason
 
     @profiler.trace('ClusterAction.do_recover', hide_args=False)
@@ -645,7 +642,7 @@ class ClusterAction(base.Action):
 
         :returns: A tuple containing the result and the corresponding reason.
         """
-        self.cluster.do_recover(self.context)
+        self.entity.do_recover(self.context)
 
         # process data from health_policy
         pd = self.data.get('health', "WORKFLOW")
@@ -654,21 +651,22 @@ class ClusterAction(base.Action):
             recover_action = pd.get('recover_action', "WORKFLOW")
             fencing = pd.get('fencing', None)
             if recover_action is not None:
+                # TODO(Qiming): Implement the support to action sequences
                 inputs['operation'] = recover_action[0]['name']
-                inputs['type'] = recover_action[0]['type']
                 inputs['params'] = recover_action[0]['params']
+                inputs['type'] = recover_action[0]['type']
             if fencing is not None and 'COMPUTE' in fencing:
                 inputs['force'] = True
 
         children = []
-        for node in self.cluster.nodes:
+        for node in self.entity.nodes:
             if node.status == 'ACTIVE':
                 continue
             node_id = node.id
             action_id = base.Action.create(
                 self.context, node_id, consts.NODE_RECOVER,
                 name='node_recover_%s' % node_id[:8],
-                cause=base.CAUSE_DERIVED, inputs=inputs,
+                cause=consts.CAUSE_DERIVED, inputs=inputs,
             )
             children.append(action_id)
 
@@ -686,7 +684,7 @@ class ClusterAction(base.Action):
             if res != self.RES_OK:
                 reason = new_reason
 
-        self.cluster.eval_status(self.context, consts.CLUSTER_RECOVER)
+        self.entity.eval_status(self.context, consts.CLUSTER_RECOVER)
         return res, reason
 
     def _update_cluster_size(self, desired):
@@ -698,8 +696,8 @@ class ClusterAction(base.Action):
             kwargs['min_size'] = min_size
         if max_size is not None:
             kwargs['max_size'] = max_size
-        self.cluster.set_status(self.context, consts.CS_RESIZING,
-                                _('Cluster resize started.'), **kwargs)
+        self.entity.set_status(self.context, consts.CS_RESIZING,
+                               _('Cluster resize started.'), **kwargs)
 
     @profiler.trace('ClusterAction.do_resize', hide_args=False)
     def do_resize(self):
@@ -711,9 +709,9 @@ class ClusterAction(base.Action):
         # Note the 'parse_resize_params' function is capable of calculating
         # desired capacity and handling best effort scaling. It also verifies
         # that the inputs are valid
-        curr_capacity = no.Node.count_by_cluster(self.context, self.cluster.id)
+        curr_capacity = no.Node.count_by_cluster(self.context, self.entity.id)
         if 'creation' not in self.data and 'deletion' not in self.data:
-            result, reason = scaleutils.parse_resize_params(self, self.cluster,
+            result, reason = scaleutils.parse_resize_params(self, self.entity,
                                                             curr_capacity)
             if result != self.RES_OK:
                 return result, reason
@@ -726,7 +724,7 @@ class ClusterAction(base.Action):
 
             # Choose victims randomly if not already picked
             if not candidates:
-                node_list = self.cluster.nodes
+                node_list = self.entity.nodes
                 candidates = scaleutils.nodes_by_random(node_list, count)
 
             self._update_cluster_size(curr_capacity - count)
@@ -743,7 +741,7 @@ class ClusterAction(base.Action):
         if result != self.RES_OK:
             reason = new_reason
 
-        self.cluster.eval_status(self.context, consts.CLUSTER_RESIZE)
+        self.entity.eval_status(self.context, consts.CLUSTER_RESIZE)
         return result, reason
 
     @profiler.trace('ClusterAction.do_scale_out', hide_args=False)
@@ -759,30 +757,29 @@ class ClusterAction(base.Action):
             count = pd.get('count', 1)
         else:
             # If no scaling policy is attached, use the input count directly
-            count = self.inputs.get('count', 1)
-            try:
-                count = utils.parse_int_param('count', count, allow_zero=False)
-            except exception.InvalidParameter:
-                reason = _('Invalid count (%s) for scaling out.') % count
+            value = self.inputs.get('count', 1)
+            success, count = utils.get_positive_int(value)
+            if not success:
+                reason = _('Invalid count (%s) for scaling out.') % value
                 return self.RES_ERROR, reason
 
         # check provided params against current properties
         # desired is checked when strict is True
         curr_size = no.Node.count_by_cluster(self.context, self.target)
         new_size = curr_size + count
-        result = scaleutils.check_size_params(self.cluster, new_size,
+        result = scaleutils.check_size_params(self.entity, new_size,
                                               None, None, True)
         if result:
             return self.RES_ERROR, result
 
-        self.cluster.set_status(self.context, consts.CS_RESIZING,
-                                _('Cluster scale out started.'),
-                                desired_capacity=new_size)
+        self.entity.set_status(self.context, consts.CS_RESIZING,
+                               _('Cluster scale out started.'),
+                               desired_capacity=new_size)
 
         result, reason = self._create_nodes(count)
         if result == self.RES_OK:
             reason = _('Cluster scaling succeeded.')
-        self.cluster.eval_status(self.context, consts.CLUSTER_SCALE_OUT)
+        self.entity.eval_status(self.context, consts.CLUSTER_SCALE_OUT)
 
         return result, reason
 
@@ -804,12 +801,10 @@ class ClusterAction(base.Action):
         else:
             # If no scaling policy is attached, use the input count directly
             candidates = []
-            count = self.inputs.get('count', 1)
-            try:
-                count = utils.parse_int_param('count', count,
-                                              allow_zero=False)
-            except exception.InvalidParameter:
-                reason = _('Invalid count (%s) for scaling in.') % count
+            value = self.inputs.get('count', 1)
+            success, count = utils.get_positive_int(value)
+            if not success:
+                reason = _('Invalid count (%s) for scaling in.') % value
                 return self.RES_ERROR, reason
 
         # check provided params against current properties
@@ -822,20 +817,20 @@ class ClusterAction(base.Action):
             count = curr_size
         new_size = curr_size - count
 
-        result = scaleutils.check_size_params(self.cluster, new_size,
+        result = scaleutils.check_size_params(self.entity, new_size,
                                               None, None, True)
         if result:
             return self.RES_ERROR, result
 
-        self.cluster.set_status(self.context, consts.CS_RESIZING,
-                                _('Cluster scale in started.'),
-                                desired_capacity=new_size)
+        self.entity.set_status(self.context, consts.CS_RESIZING,
+                               _('Cluster scale in started.'),
+                               desired_capacity=new_size)
 
         # Choose victims randomly
         if len(candidates) == 0:
-            candidates = scaleutils.nodes_by_random(self.cluster.nodes, count)
+            candidates = scaleutils.nodes_by_random(self.entity.nodes, count)
 
-        #
+        # Sleep period
         self._sleep(grace_period)
 
         result, reason = self._delete_nodes(candidates)
@@ -843,7 +838,7 @@ class ClusterAction(base.Action):
         if result == self.RES_OK:
             reason = _('Cluster scaling succeeded.')
 
-        self.cluster.eval_status(self.context, consts.CLUSTER_SCALE_IN)
+        self.entity.eval_status(self.context, consts.CLUSTER_SCALE_IN)
 
         return result, reason
 
@@ -858,13 +853,13 @@ class ClusterAction(base.Action):
         if not policy_id:
             return self.RES_ERROR, _('Policy not specified.')
 
-        res, reason = self.cluster.attach_policy(self.context, policy_id,
-                                                 inputs)
+        res, reason = self.entity.attach_policy(self.context, policy_id,
+                                                inputs)
         result = self.RES_OK if res else self.RES_ERROR
 
         # Store cluster since its data could have been updated
         if result == self.RES_OK:
-            self.cluster.store(self.context)
+            self.entity.store(self.context)
 
         return result, reason
 
@@ -878,12 +873,12 @@ class ClusterAction(base.Action):
         if not policy_id:
             return self.RES_ERROR, _('Policy not specified.')
 
-        res, reason = self.cluster.detach_policy(self.context, policy_id)
+        res, reason = self.entity.detach_policy(self.context, policy_id)
         result = self.RES_OK if res else self.RES_ERROR
 
         # Store cluster since its data could have been updated
         if result == self.RES_OK:
-            self.cluster.store(self.context)
+            self.entity.store(self.context)
 
         return result, reason
 
@@ -896,10 +891,54 @@ class ClusterAction(base.Action):
         policy_id = self.inputs.pop('policy_id', None)
         if not policy_id:
             return self.RES_ERROR, _('Policy not specified.')
-        res, reason = self.cluster.update_policy(self.context, policy_id,
-                                                 **self.inputs)
+        res, reason = self.entity.update_policy(self.context, policy_id,
+                                                **self.inputs)
         result = self.RES_OK if res else self.RES_ERROR
         return result, reason
+
+    @profiler.trace('ClusterAction.do_operation', hide_args=False)
+    def do_operation(self):
+        """Handler for CLUSTER_OPERATION action.
+
+        Note that the inputs for the action should contain the following items:
+
+          * ``nodes``: The nodes to operate on;
+          * ``operation``: The operation to be performed;
+          * ``params``: The parameters corresponding to the operation.
+
+        :returns: A tuple containing the result and the corresponding reason.
+        """
+        inputs = copy.deepcopy(self.inputs)
+        operation = inputs['operation']
+        self.entity.do_operation(self.context, operation=operation)
+
+        child = []
+        res = self.RES_OK
+        reason = _("Cluster operation '%s' completed.") % operation
+        nodes = inputs.pop('nodes')
+        for node_id in nodes:
+            action_id = base.Action.create(
+                self.context, node_id, consts.NODE_OPERATION,
+                name='node_%s_%s' % (operation, node_id[:8]),
+                cause=consts.CAUSE_DERIVED,
+                inputs=inputs,
+            )
+            child.append(action_id)
+
+        if child:
+            dobj.Dependency.create(self.context, [c for c in child], self.id)
+            for cid in child:
+                ao.Action.update(self.context, cid,
+                                 {'status': base.Action.READY})
+            dispatcher.start_action()
+
+            # Wait for dependent action if any
+            res, new_reason = self._wait_for_dependents()
+            if res != self.RES_OK:
+                reason = new_reason
+
+        self.entity.eval_status(self.context, operation)
+        return res, reason
 
     def _execute(self, **kwargs):
         """Private method for action execution.
@@ -910,11 +949,10 @@ class ClusterAction(base.Action):
         :returns: A tuple containing the result and the corresponding reason.
         """
         # do pre-action policy checking
-        self.policy_check(self.cluster.id, 'BEFORE')
+        self.policy_check(self.entity.id, 'BEFORE')
         if self.data['status'] != policy_mod.CHECK_OK:
             reason = _('Policy check failure: %s') % self.data['reason']
-            EVENT.error(self.context, self.cluster, self.action, 'Failed',
-                        reason)
+            EVENT.error(self, consts.PHASE_ERROR, reason)
             return self.RES_ERROR, reason
 
         result = self.RES_OK
@@ -922,21 +960,19 @@ class ClusterAction(base.Action):
         method_name = action_name.replace('cluster', 'do')
         method = getattr(self, method_name, None)
         if method is None:
-            error = _('Unsupported action: %s.') % self.action
-            EVENT.error(self.context, self.cluster, self.action, 'Failed',
-                        error)
-            return self.RES_ERROR, error
+            reason = _('Unsupported action: %s.') % self.action
+            EVENT.error(self, consts.PHASE_ERROR, reason)
+            return self.RES_ERROR, reason
 
         result, reason = method()
 
         # do post-action policy checking
         if result == self.RES_OK:
-            self.policy_check(self.cluster.id, 'AFTER')
+            self.policy_check(self.entity.id, 'AFTER')
             if self.data['status'] != policy_mod.CHECK_OK:
-                error = _('Policy check failure: %s') % self.data['reason']
-                EVENT.error(self.context, self.cluster, self.action, 'Failed',
-                            error)
-                return self.RES_ERROR, error
+                reason = _('Policy check failure: %s') % self.data['reason']
+                EVENT.error(self, consts.PHASE_ERROR, reason)
+                return self.RES_ERROR, reason
 
         return result, reason
 
@@ -955,8 +991,9 @@ class ClusterAction(base.Action):
                                                self.id, self.owner,
                                                senlin_lock.CLUSTER_SCOPE,
                                                forced)
+        # Failed to acquire lock, return RES_RETRY
         if not res:
-            return self.RES_ERROR, _('Failed in locking cluster.')
+            return self.RES_RETRY, _('Failed in locking cluster.')
 
         try:
             res, reason = self._execute(**kwargs)

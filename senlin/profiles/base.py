@@ -33,7 +33,9 @@ LOG = logging.getLogger(__name__)
 
 
 class Profile(object):
-    '''Base class for profiles.'''
+    """Base class for profiles."""
+
+    VERSIONS = {}
 
     KEYS = (
         TYPE, VERSION, PROPERTIES,
@@ -57,7 +59,7 @@ class Profile(object):
     }
 
     properties_schema = {}
-    operations_schema = {}
+    OPERATIONS = {}
 
     def __new__(cls, name, spec, **kwargs):
         """Create a new profile of the appropriate class.
@@ -124,7 +126,7 @@ class Profile(object):
         self._orchestrationclient = None
 
     @classmethod
-    def from_object(cls, profile):
+    def _from_object(cls, profile):
         '''Construct a profile from profile object.
 
         :param profile: a profile object that contains all required fields.
@@ -152,7 +154,7 @@ class Profile(object):
             if profile is None:
                 raise exc.ResourceNotFound(type='profile', id=profile_id)
 
-        return cls.from_object(profile)
+        return cls._from_object(profile)
 
     @classmethod
     def load_all(cls, ctx, limit=None, marker=None, sort=None, filters=None,
@@ -164,14 +166,39 @@ class Profile(object):
                                      project_safe=project_safe)
 
         for record in records:
-            yield cls.from_object(record)
+            yield cls._from_object(record)
+
+    @classmethod
+    def create(cls, ctx, name, spec, metadata=None):
+        """Create a profile object and validate it.
+
+        :param ctx: The requesting context.
+        :param name: The name for the profile object.
+        :param spec: A dict containing the detailed spec.
+        :param metadata: An optional dictionary specifying key-value pairs to
+                         be associated with the profile.
+        :returns: An instance of Profile.
+        """
+        if metadata is None:
+            metadata = {}
+
+        profile = None
+        try:
+            profile = cls(name, spec, metadata=metadata, user=ctx.user,
+                          project=ctx.project)
+            profile.validate(True)
+        except (exc.ResourceNotFound, exc.ESchema) as ex:
+            error = _("Failed in creating profile %(name)s: %(error)s"
+                      ) % {"name": name, "error": six.text_type(ex)}
+            raise exc.InvalidSpec(message=error)
+
+        profile.store(ctx)
+
+        return profile
 
     @classmethod
     def delete(cls, ctx, profile_id):
         po.Profile.delete(ctx, profile_id)
-
-    def add_dependents(self, context, profile_id):
-        pass
 
     def store(self, ctx):
         '''Store the profile into database and return its ID.'''
@@ -266,6 +293,11 @@ class Profile(object):
     def get_schema(cls):
         return dict((name, dict(schema))
                     for name, schema in cls.properties_schema.items())
+
+    @classmethod
+    def get_ops(cls):
+        return dict((name, dict(schema))
+                    for name, schema in cls.OPERATIONS.items())
 
     def _init_context(self):
         profile_context = {}
@@ -370,7 +402,7 @@ class Profile(object):
 
     def do_leave(self, obj):
         """For subclass to override to perform extra operations."""
-        LOG.warning(_LW("Join operation not specialized."))
+        LOG.warning(_LW("Leave operation not specialized."))
         return True
 
     def do_rebuild(self, obj):

@@ -12,6 +12,9 @@
 
 """Policy object."""
 
+from oslo_utils import uuidutils
+
+from senlin.common import exception
 from senlin.db import api as db_api
 from senlin.objects import base
 from senlin.objects import fields
@@ -43,6 +46,32 @@ class Policy(base.SenlinObject, base.VersionedObjectDictCompat):
         return cls._from_db_object(context, cls(context), obj)
 
     @classmethod
+    def find(cls, context, identity, **kwargs):
+        """Find a policy with the given identity.
+
+        :param context: An instance of the request context.
+        :param identity: The UUID, name or short-id of a profile.
+        :param project_safe: A boolean indicating whether policies from
+                             projects other than the requesting one should be
+                             evaluated.
+        :return: A DB object of policy or an exception of `ResourceNotFound`
+                 if no matching object is found.
+        """
+        if uuidutils.is_uuid_like(identity):
+            policy = cls.get(context, identity, **kwargs)
+            if not policy:
+                policy = cls.get_by_name(context, identity, **kwargs)
+        else:
+            policy = cls.get_by_name(context, identity, **kwargs)
+            if not policy:
+                policy = cls.get_by_short_id(context, identity, **kwargs)
+
+        if not policy:
+            raise exception.ResourceNotFound(type='policy', id=identity)
+
+        return policy
+
+    @classmethod
     def get(cls, context, policy_id, **kwargs):
         obj = db_api.policy_get(context, policy_id, **kwargs)
         return cls._from_db_object(context, cls(), obj)
@@ -71,3 +100,18 @@ class Policy(base.SenlinObject, base.VersionedObjectDictCompat):
     @classmethod
     def delete(cls, context, obj_id):
         db_api.policy_delete(context, obj_id)
+
+    def to_dict(self):
+        policy_dict = {
+            'id': self.id,
+            'name': self.name,
+            'type': self.type,
+            'user': self.user,
+            'project': self.project,
+            'domain': self.domain,
+            'spec': self.spec,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+            'data': self.data
+        }
+        return policy_dict

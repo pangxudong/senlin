@@ -18,6 +18,7 @@ from oslo_serialization import jsonutils
 import six
 
 from senlin.common import constraints
+from senlin.common import consts
 from senlin.common import exception as exc
 from senlin.common.i18n import _
 from senlin.common import schema
@@ -27,6 +28,12 @@ from senlin.drivers import base as driver_base
 
 class ServerProfile(base.Profile):
     """Profile for an OpenStack Nova server."""
+
+    VERSIONS = {
+        '1.0': [
+            {'status': consts.SUPPORTED, 'since': '2016.04'}
+        ]
+    }
 
     KEYS = (
         CONTEXT, ADMIN_PASS, AUTO_DISK_CONFIG, AVAILABILITY_ZONE,
@@ -516,6 +523,8 @@ class ServerProfile(base.Profile):
                 hints.update({'group': group_id})
                 kwargs['scheduler_hints'] = hints
 
+        server = None
+        resource_id = 'UNKNOWN'
         try:
             server = self.compute(obj).server_create(**kwargs)
             self.compute(obj).wait_for_server(server.id)

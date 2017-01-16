@@ -12,8 +12,13 @@
 
 """Action object."""
 
+from oslo_utils import uuidutils
+
+from senlin.common import exception
+from senlin.common import utils
 from senlin.db import api as db_api
 from senlin.objects import base
+from senlin.objects import dependency as dobj
 from senlin.objects import fields
 
 
@@ -50,6 +55,30 @@ class Action(base.SenlinObject, base.VersionedObjectDictCompat):
     def create(cls, context, values):
         obj = db_api.action_create(context, values)
         return cls._from_db_object(context, cls(context), obj)
+
+    @classmethod
+    def find(cls, context, identity, **kwargs):
+        """Find an action with the given identity.
+
+        :param context: An instance of the request context.
+        :param identity: The UUID, name or short-id of an action.
+        :param dict kwargs: Other query parameters.
+        :return: A DB object of action or an exception `ResourceNotFound` if
+                 no matching action is found.
+        """
+        if uuidutils.is_uuid_like(identity):
+            action = cls.get(context, identity, **kwargs)
+            if not action:
+                action = cls.get_by_name(context, identity, **kwargs)
+        else:
+            action = cls.get_by_name(context, identity, **kwargs)
+            if not action:
+                action = cls.get_by_short_id(context, identity, **kwargs)
+
+        if not action:
+            raise exception.ResourceNotFound(type='action', id=identity)
+
+        return action
 
     @classmethod
     def get(cls, context, action_id, **kwargs):
@@ -97,8 +126,8 @@ class Action(base.SenlinObject, base.VersionedObjectDictCompat):
         return db_api.action_acquire(context, action_id, owner, timestamp)
 
     @classmethod
-    def acquire_1st_ready(cls, context, owner, timestamp):
-        return db_api.action_acquire_1st_ready(context, owner, timestamp)
+    def acquire_random_ready(cls, context, owner, timestamp):
+        return db_api.action_acquire_random_ready(context, owner, timestamp)
 
     @classmethod
     def abandon(cls, context, action_id):
@@ -123,3 +152,35 @@ class Action(base.SenlinObject, base.VersionedObjectDictCompat):
     @classmethod
     def delete(cls, context, action_id):
         db_api.action_delete(context, action_id)
+
+    def to_dict(self):
+        if self.id:
+            dep_on = dobj.Dependency.get_depended(self.context, self.id)
+            dep_by = dobj.Dependency.get_dependents(self.context, self.id)
+        else:
+            dep_on = []
+            dep_by = []
+        action_dict = {
+            'id': self.id,
+            'name': self.name,
+            'action': self.action,
+            'target': self.target,
+            'cause': self.cause,
+            'owner': self.owner,
+            'interval': self.interval,
+            'start_time': self.start_time,
+            'end_time': self.end_time,
+            'timeout': self.timeout,
+            'status': self.status,
+            'status_reason': self.status_reason,
+            'inputs': self.inputs,
+            'outputs': self.outputs,
+            'depends_on': dep_on,
+            'depended_by': dep_by,
+            'created_at': utils.isotime(self.created_at),
+            'updated_at': utils.isotime(self.updated_at),
+            'data': self.data,
+            'user': self.user,
+            'project': self.project,
+        }
+        return action_dict

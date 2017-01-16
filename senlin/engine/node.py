@@ -16,8 +16,7 @@ import six
 
 from senlin.common import consts
 from senlin.common import exception as exc
-from senlin.common.i18n import _
-from senlin.common.i18n import _LE
+from senlin.common.i18n import _, _LE
 from senlin.common import utils
 from senlin.objects import node as no
 from senlin.profiles import base as pb
@@ -218,8 +217,8 @@ class Node(object):
         now = timeutils.utcnow(True)
         if status == consts.NS_ACTIVE and self.status == consts.NS_CREATING:
             self.created_at = values['created_at'] = now
-        elif status == consts.NS_ACTIVE and self.status == consts.NS_UPDATING:
-            # TODO(Qiming): update_at should be changed unconditionally
+        if status not in [consts.NS_CREATING, consts.NS_UPDATING,
+                          consts.NS_RECOVERING, consts.NS_OPERATING]:
             self.updated_at = values['updated_at'] = now
 
         self.status = status
@@ -394,4 +393,31 @@ class Node(object):
         self.set_status(context, consts.NS_ACTIVE,
                         reason=_('Recover succeeded'), **params)
 
+        return True
+
+    def do_operation(self, context, **inputs):
+        """Perform an operation on a node.
+
+        :param context: The request context.
+        :param dict inputs: The operation and parameters if any.
+        :returns: A boolean indicating whether the operation was a success.
+        """
+        if not self.physical_id:
+            return False
+
+        op = inputs['operation']
+        params = inputs.get('params', {})
+        self.set_status(context, consts.NS_OPERATING,
+                        reason=_("Operation '%s' in progress") % op)
+
+        try:
+            profile = self.rt['profile']
+            method = getattr(profile, 'handle_' + op)
+            method(self, **params)
+        except exc.EResourceOperation as ex:
+            self.set_status(context, consts.NS_ERROR, reason=six.text_type(ex))
+            return False
+
+        self.set_status(context, consts.NS_ACTIVE,
+                        reason=_("Operation '%s' succeeded") % op)
         return True

@@ -62,7 +62,16 @@ class DummyProfile(pb.Profile):
             'third key',
         ),
     }
-    OPERATIONS = {}
+    OPERATIONS = {
+        'op1': schema.Operation(
+            'Operation 1',
+            schema={
+                'param1': schema.StringParam(
+                    'description of param1',
+                )
+            }
+        )
+    }
 
     def __init__(self, name, spec, **kwargs):
         super(DummyProfile, self).__init__(name, spec, **kwargs)
@@ -142,7 +151,7 @@ class TestProfileBase(base.SenlinTestCase):
         bad_spec = copy.deepcopy(self.spec)
         del bad_spec['version']
 
-        ex = self.assertRaises(exception.SpecValidationFailed,
+        ex = self.assertRaises(exception.ESchema,
                                pb.Profile, 'test-profile', bad_spec)
         self.assertEqual("The 'version' key is missing from the provided "
                          "spec map.", six.text_type(ex))
@@ -152,7 +161,7 @@ class TestProfileBase(base.SenlinTestCase):
         obj.store(self.ctx)
         profile = po.Profile.get(self.ctx, obj.id)
 
-        result = pb.Profile.from_object(profile)
+        result = pb.Profile._from_object(profile)
 
         self.assertEqual(profile.id, result.id)
         self.assertEqual(profile.name, result.name)
@@ -217,7 +226,7 @@ class TestProfileBase(base.SenlinTestCase):
                                          project_safe=True)
 
     @mock.patch.object(po.Profile, 'get_all')
-    @mock.patch.object(pb.Profile, 'from_object')
+    @mock.patch.object(pb.Profile, '_from_object')
     def test_load_all_with_results(self, mock_from, mock_get):
         dbobj = mock.Mock()
         mock_get.return_value = [dbobj]
@@ -233,7 +242,7 @@ class TestProfileBase(base.SenlinTestCase):
         mock_from.assert_called_once_with(dbobj)
 
     @mock.patch.object(po.Profile, 'get_all')
-    @mock.patch.object(pb.Profile, 'from_object')
+    @mock.patch.object(pb.Profile, '_from_object')
     def test_load_all_with_params(self, mock_from, mock_get):
         dbobj = mock.Mock()
         mock_get.return_value = [dbobj]
@@ -249,6 +258,40 @@ class TestProfileBase(base.SenlinTestCase):
                                          sort='FOOKEY', filters='BARDICT',
                                          project_safe=False)
         mock_from.assert_called_once_with(dbobj)
+
+    @mock.patch.object(senlin_ctx, 'get_service_context')
+    def test_create(self, mock_context):
+        mock_context.return_value = {}
+        res = pb.Profile.create(self.ctx, 'my_profile', self.spec)
+
+        self.assertIsInstance(res, pb.Profile)
+
+        obj = po.Profile.get(self.ctx, res.id)
+        self.assertEqual('my_profile', obj.name)
+
+    def test_create_profile_type_not_found(self):
+        spec = copy.deepcopy(self.spec)
+        spec['type'] = "bogus"
+        ex = self.assertRaises(exception.InvalidSpec,
+                               pb.Profile.create,
+                               self.ctx, 'my_profile', spec)
+
+        self.assertEqual("Failed in creating profile my_profile: The "
+                         "profile_type (bogus-1.0) could not be found.",
+                         six.text_type(ex))
+
+    @mock.patch.object(pb.Profile, 'validate')
+    @mock.patch.object(senlin_ctx, 'get_service_context')
+    def test_create_failed_validation(self, mock_context, mock_validate):
+        mock_context.return_value = {}
+        mock_validate.side_effect = exception.ESchema(message="Boom")
+
+        ex = self.assertRaises(exception.InvalidSpec,
+                               pb.Profile.create,
+                               self.ctx, 'my_profile', self.spec)
+
+        self.assertEqual("Failed in creating profile my_profile: Boom",
+                         six.text_type(ex))
 
     @mock.patch.object(po.Profile, 'delete')
     def test_delete(self, mock_delete):
@@ -464,6 +507,23 @@ class TestProfileBase(base.SenlinTestCase):
         }
 
         actual = DummyProfile.get_schema()
+        self.assertEqual(expected, actual)
+
+    def test_get_ops(self):
+        expected = {
+            'op1': {
+                'description': 'Operation 1',
+                'parameters': {
+                    'param1': {
+                        'type': 'String',
+                        'required': False,
+                        'description': 'description of param1',
+                    }
+                }
+            },
+        }
+
+        actual = DummyProfile.get_ops()
         self.assertEqual(expected, actual)
 
     @mock.patch.object(pb.Profile, 'load')

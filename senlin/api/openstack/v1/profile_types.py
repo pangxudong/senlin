@@ -14,14 +14,9 @@
 Profile type endpoint for Senlin v1 ReST API.
 """
 
-import jsonschema
-import six
-from webob import exc
-
 from senlin.api.common import util
+from senlin.api.common import version_request as vr
 from senlin.api.common import wsgi
-from senlin.objects import base as obj_base
-from senlin.objects.requests import profile_type as vorp
 
 
 class ProfileTypeController(wsgi.Controller):
@@ -32,29 +27,30 @@ class ProfileTypeController(wsgi.Controller):
 
     @util.policy_enforce
     def index(self, req):
-        try:
-            norm_req = obj_base.SenlinObject.normalize_req(
-                'ProfileTypeListRequest', {})
-            obj = vorp.ProfileTypeListRequest.obj_from_primitive(norm_req)
-            jsonschema.validate(norm_req, obj.to_json_schema())
-        except ValueError as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex))
 
-        types = self.rpc_client.call2(req.context, 'profile_type_list2', obj)
-        return {'profile_types': types}
+        obj = util.parse_request('ProfileTypeListRequest', req, {})
+        types = self.rpc_client.call(req.context, 'profile_type_list', obj)
+        result = types
+        if req.version_request <= vr.APIVersionRequest("1.4"):
+            # We return only profile type name before 1.5
+            result = [{'name': '-'.join((t['name'], t['version']))}
+                      for t in types]
+        return {'profile_types': result}
 
     @util.policy_enforce
     def get(self, req, type_name):
         """Gets the details about a specified profile type."""
-        try:
-            norm_req = obj_base.SenlinObject.normalize_req(
-                'ProfileTypeGetRequest', {'type_name': type_name})
-            obj = vorp.ProfileTypeGetRequest.obj_from_primitive(norm_req)
-            jsonschema.validate(norm_req, obj.to_json_schema())
-        except ValueError as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex))
-        except jsonschema.exceptions.ValidationError as ex:
-            raise exc.HTTPBadRequest(six.text_type(ex.message))
 
-        content = self.rpc_client.call2(req.context, 'profile_type_get2', obj)
+        obj = util.parse_request(
+            'ProfileTypeGetRequest', req, {'type_name': type_name})
+        content = self.rpc_client.call(req.context, 'profile_type_get', obj)
         return {'profile_type': content}
+
+    @wsgi.Controller.api_version('1.4')
+    @util.policy_enforce
+    def ops(self, req, type_name):
+        """Lists the operations supported by the specified profile type."""
+
+        obj = util.parse_request(
+            'ProfileTypeOpListRequest', req, {'type_name': type_name})
+        return self.rpc_client.call(req.context, 'profile_type_ops', obj)

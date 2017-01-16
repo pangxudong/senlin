@@ -133,9 +133,9 @@ class Json(fields.FieldType):
         if isinstance(value, six.string_types):
             try:
                 return jsonutils.loads(value)
-            except Exception:
-                # TODO(Anyone): emit a useful message here.
-                raise ValueError
+            except ValueError:
+                msg = _("The value (%s) is not a valid JSON.") % value
+                raise ValueError(msg)
         return value
 
     def from_primitive(self, obj, attr, value):
@@ -159,11 +159,7 @@ class Json(fields.FieldType):
 class NotificationPriority(fields.Enum):
 
     # The priorities here are derived from oslo_messaging.notify.notifier
-    ALL = (
-        AUDIT, CRITICAL, ERROR, WARN, INFO, DEBUG, SAMPLE,
-    ) = (
-        'audit', 'critical', 'error', 'warn', 'info', 'debug', 'sample',
-    )
+    ALL = consts.NOTIFICATION_PRIORITIES
 
     def __init__(self):
         super(NotificationPriority, self).__init__(self.ALL)
@@ -171,39 +167,10 @@ class NotificationPriority(fields.Enum):
 
 class NotificationPhase(fields.Enum):
 
-    ALL = (
-        START, END, ERROR,
-    ) = (
-        'start', 'end', 'error',
-    )
+    ALL = consts.NOTIFICATION_PHASES
 
     def __init__(self):
         super(NotificationPhase, self).__init__(self.ALL)
-
-
-class NotificationAction(fields.Enum):
-
-    # This is a combination of cluster actions and node actions
-    ALL = (
-        CLUSTER_CREATE, CLUSTER_DELETE, CLUSTER_UPDATE,
-        CLUSTER_ADD_NODES, CLUSTER_DEL_NODES, CLUSTER_REPLACE_NODES,
-        CLUSTER_SCALE_OUT, CLUSTER_SCALE_IN, CLUSTER_RESIZE,
-        CLUSTER_ATTACH_POLICY, CLUSTER_DETACH_POLICY, CLUSTER_UPDATE_POLICY,
-        CLUSTER_CHECK, CLUSTER_RECOVER,
-        NODE_CREATE, NODE_DELETE, NODE_UPDATE,
-        NODE_CHECK, NODE_RECOVER
-    ) = (
-        'create', 'delete', 'update',
-        'add_nodes', 'del_nodes', 'replace_nodes',
-        'scale_out', 'scale_in', 'resize',
-        'attach_policy', 'detach_policy', 'update_policy',
-        'check', 'recover',
-        'create', 'delete', 'update',
-        'check', 'recover',
-    )
-
-    def __init__(self):
-        super(NotificationAction, self).__init__(self.ALL)
 
 
 class Name(fields.String):
@@ -483,10 +450,6 @@ class NotificationPriorityField(fields.BaseEnumField):
 
 class NotificationPhaseField(fields.BaseEnumField):
     AUTO_TYPE = NotificationPhase()
-
-
-class NotificationActionField(fields.BaseEnumField):
-    AUTO_TYPE = NotificationAction()
 
 
 class NameField(fields.AutoTypedField):

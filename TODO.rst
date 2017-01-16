@@ -23,6 +23,9 @@ ENGINE
       or policies.
     * Always do health check before any scaling actions.
 
+  - Verify the works to be done after oslo.messaging version bump.
+    [https://review.openstack.org/#/c/408114]
+
 MIDDLE PRIORITY
 ===============
 
@@ -30,7 +33,6 @@ API
 ---
   - Support advanced filters as suggested by the API WG:
     `Filtering Guidelines`_
-  - Support to ``os-request-id`` when serving api requests.
 
 PROFILE
 -------
@@ -71,6 +73,10 @@ PROFILE
 DOC
 -----
   - Provide a sample conf file for customizing senlin options.
+
+TEST
+----
+  - Add more Rally profile and scenario support for Senlin.
 
 OTHERS
 ------

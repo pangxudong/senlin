@@ -107,6 +107,12 @@ class ClusteringAPIClient(rest_client.RestClient):
 
         return self.get_resp(resp, body)
 
+    def trigger_operation(self, obj_type, obj_id, params):
+        uri = '{0}/{1}/{2}/ops'.format(self.version, obj_type, obj_id)
+        data = jsonutils.dumps(params)
+        resp, body = self.post(uri, body=data)
+        return self.get_resp(resp, body)
+
     def cluster_replace_nodes(self, obj_type, obj_id, params=None):
         uri = '{0}/{1}/{2}/actions'.format(self.version, obj_type, obj_id)
         if params is not None:
@@ -128,6 +134,12 @@ class ClusteringAPIClient(rest_client.RestClient):
     def get_cluster_policy(self, cluster_id, policy_id):
         uri = '{0}/clusters/{1}/policies/{2}'.format(self.version, cluster_id,
                                                      policy_id)
+        resp, body = self.get(uri)
+
+        return self.get_resp(resp, body)
+
+    def cluster_collect(self, cluster, path):
+        uri = '{0}/clusters/{1}/attrs/{2}'.format(self.version, cluster, path)
         resp, body = self.get(uri)
 
         return self.get_resp(resp, body)

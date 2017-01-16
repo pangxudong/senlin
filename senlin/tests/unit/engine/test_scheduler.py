@@ -90,7 +90,7 @@ class SchedulerTest(base.SenlinTestCase):
             oslo_context.get_current(),
             None, f)
 
-    @mock.patch.object(db_api, 'action_acquire_1st_ready')
+    @mock.patch.object(db_api, 'action_acquire_random_ready')
     @mock.patch.object(db_api, 'action_acquire')
     def test_start_action(self, mock_action_acquire,
                           mock_action_acquire_1st):
@@ -113,7 +113,7 @@ class SchedulerTest(base.SenlinTestCase):
         self.assertEqual(mock_thread, tgm.workers['0123'])
         mock_thread.link.assert_called_once_with(mock.ANY, '0123')
 
-    @mock.patch.object(db_api, 'action_acquire_1st_ready')
+    @mock.patch.object(db_api, 'action_acquire_random_ready')
     def test_start_action_no_action_id(self, mock_acquire_action):
         mock_action = mock.Mock()
         mock_action.id = '0123'
@@ -135,7 +135,7 @@ class SchedulerTest(base.SenlinTestCase):
         mock_thread.link.assert_called_once_with(mock.ANY, '0123')
 
     @mock.patch.object(scheduler, 'sleep')
-    @mock.patch.object(db_api, 'action_acquire_1st_ready')
+    @mock.patch.object(db_api, 'action_acquire_random_ready')
     def test_start_action_batch_control(self, mock_acquire_action, mock_sleep):
         mock_action1 = mock.Mock()
         mock_action1.id = 'ID1'
@@ -158,7 +158,7 @@ class SchedulerTest(base.SenlinTestCase):
 
         mock_sleep.assert_called_once_with(3)
 
-    @mock.patch.object(db_api, 'action_acquire_1st_ready')
+    @mock.patch.object(db_api, 'action_acquire_random_ready')
     @mock.patch.object(db_api, 'action_acquire')
     def test_start_action_failed_locking_action(self, mock_acquire_action,
                                                 mock_acquire_action_1st):
@@ -171,7 +171,7 @@ class SchedulerTest(base.SenlinTestCase):
         res = tgm.start_action('4567', '0123')
         self.assertIsNone(res)
 
-    @mock.patch.object(db_api, 'action_acquire_1st_ready')
+    @mock.patch.object(db_api, 'action_acquire_random_ready')
     def test_start_action_no_action_ready(self, mock_acquire_action):
         mock_acquire_action.return_value = None
         mock_group = mock.Mock()
@@ -188,7 +188,8 @@ class SchedulerTest(base.SenlinTestCase):
         tgm = scheduler.ThreadGroupManager()
         tgm.cancel_action('action0123')
 
-        mock_load.assert_called_once_with(tgm.db_session, 'action0123')
+        mock_load.assert_called_once_with(tgm.db_session, 'action0123',
+                                          project_safe=False)
         mock_action.signal.assert_called_once_with(mock_action.SIG_CANCEL)
 
     def test_suspend_action(self):
@@ -198,7 +199,8 @@ class SchedulerTest(base.SenlinTestCase):
         tgm = scheduler.ThreadGroupManager()
         tgm.suspend_action('action0123')
 
-        mock_load.assert_called_once_with(tgm.db_session, 'action0123')
+        mock_load.assert_called_once_with(tgm.db_session, 'action0123',
+                                          project_safe=False)
         mock_action.signal.assert_called_once_with(mock_action.SIG_SUSPEND)
 
     def test_resume_action(self):
@@ -208,7 +210,8 @@ class SchedulerTest(base.SenlinTestCase):
         tgm = scheduler.ThreadGroupManager()
         tgm.resume_action('action0123')
 
-        mock_load.assert_called_once_with(tgm.db_session, 'action0123')
+        mock_load.assert_called_once_with(tgm.db_session, 'action0123',
+                                          project_safe=False)
         mock_action.signal.assert_called_once_with(mock_action.SIG_RESUME)
 
     def test_add_timer(self):

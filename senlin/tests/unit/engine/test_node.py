@@ -256,7 +256,7 @@ class TestNode(base.SenlinTestCase):
         self.assertEqual('ACTIVE', node.status)
         self.assertEqual('Creation succeeded', node.status_reason)
         self.assertIsNotNone(node.created_at)
-        self.assertIsNone(node.updated_at)
+        self.assertIsNotNone(node.updated_at)
 
         # update
         node.set_status(self.context, consts.NS_UPDATING,
@@ -264,7 +264,6 @@ class TestNode(base.SenlinTestCase):
         self.assertEqual('UPDATING', node.status)
         self.assertEqual('Update in progress', node.status_reason)
         self.assertIsNotNone(node.created_at)
-        self.assertIsNone(node.updated_at)
 
         node.set_status(self.context, consts.NS_ACTIVE,
                         reason='Update succeeded')
@@ -465,13 +464,16 @@ class TestNode(base.SenlinTestCase):
         self.assertFalse(res)
         self.assertNotEqual(new_id, node.profile_id)
         mock_db.assert_has_calls([
-            mock.call(self.context, node.id,
-                      {'status': 'UPDATING',
-                       'status_reason': 'Update in progress'}),
-            mock.call(self.context, node.id,
-                      {'status': 'ERROR',
-                       'status_reason': 'Failed in updating PROFILE ID: '
-                                        'reason.'})
+            mock.call(
+                self.context, node.id,
+                {'status': 'UPDATING', 'status_reason': 'Update in progress'}
+            ),
+            mock.call(
+                self.context, node.id,
+                {'status': 'ERROR',
+                 'status_reason': 'Failed in updating PROFILE ID: reason.',
+                 'updated_at': mock.ANY}
+            )
         ])
         self.assertEqual(1, mock_update.call_count)
 
@@ -686,3 +688,53 @@ class TestNode(base.SenlinTestCase):
         res = node.do_recover(self.context, **params)
 
         self.assertFalse(res)
+
+    @mock.patch.object(nodem.Node, 'set_status')
+    def test_node_operation(self, mock_set_status):
+        node = nodem.Node('node1', PROFILE_ID, '')
+        node.physical_id = 'd94d6333-82e6-4f87-b7ab-b786776df9d1'
+        x_profile = mock.Mock()
+        x_profile.handle_dance = mock.Mock(return_value=True)
+        node.rt['profile'] = x_profile
+
+        inputs = {'operation': 'dance', 'params': {'style': 'tango'}}
+        res = node.do_operation(self.context, **inputs)
+
+        self.assertTrue(res)
+        mock_set_status.assert_has_calls([
+            mock.call(self.context, consts.NS_OPERATING,
+                      reason="Operation 'dance' in progress"),
+            mock.call(self.context, consts.NS_ACTIVE,
+                      reason="Operation 'dance' succeeded")
+        ])
+        x_profile.handle_dance.assert_called_once_with(node, style='tango')
+
+    def test_node_operation_no_physical_id(self):
+        node = nodem.Node('node1', PROFILE_ID, None)
+        inputs = {'operation': 'dance', 'params': {'style': 'tango'}}
+
+        res = node.do_operation(self.context, **inputs)
+
+        self.assertFalse(res)
+
+    @mock.patch.object(nodem.Node, 'set_status')
+    def test_node_operation_failed_op(self, mock_set_status):
+        node = nodem.Node('node1', PROFILE_ID, '')
+        node.physical_id = 'd94d6333-82e6-4f87-b7ab-b786776df9d1'
+        x_profile = mock.Mock()
+        err = exception.EResourceOperation(
+            op='dance', type='container', id='test_id', message='Boom')
+        x_profile.handle_dance = mock.Mock(side_effect=err)
+        node.rt['profile'] = x_profile
+
+        inputs = {'operation': 'dance', 'params': {'style': 'tango'}}
+        res = node.do_operation(self.context, **inputs)
+
+        self.assertFalse(res)
+        mock_set_status.assert_has_calls([
+            mock.call(self.context, consts.NS_OPERATING,
+                      reason="Operation 'dance' in progress"),
+            mock.call(self.context, consts.NS_ERROR,
+                      reason="Failed in dance container test_id: Boom.")
+        ])
+        x_profile.handle_dance.assert_called_once_with(node, style='tango')
