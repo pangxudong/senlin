@@ -1049,7 +1049,7 @@ class ServerProfile(base.Profile):
             input_str = jsonutils.dumps(input_dict)
 
             execution = wfc.execution_create(workflow_name, input_str)
-            wait_for_execution(execution.id)
+            wfc.wait_for_execution(execution.id)
             output = wfc.execution_find(execution.id).output
         except exc.InternalError as ex:
             raise exc.EResourceUpdate(type='server', id=obj.physical_id,
