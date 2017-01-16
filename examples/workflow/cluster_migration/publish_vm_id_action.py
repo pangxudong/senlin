@@ -12,4 +12,4 @@ class PublishVmIdAction(NovaAction):
         client = self._get_client()
 
         if self._migrate:
-            return Result(data={'uuid': self._uuid})
+            return Result(data={self._uuid})
