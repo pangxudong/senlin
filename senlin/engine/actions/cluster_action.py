@@ -648,10 +648,10 @@ class ClusterAction(base.Action):
         self.cluster.do_recover(self.context)
 
         # process data from health_policy
-        pd = self.data.get('health', WORKFLOW)
+        pd = self.data.get('health', "WORKFLOW")
         inputs = {}
         if pd:
-            recover_action = pd.get('recover_action', WORKFLOW)
+            recover_action = pd.get('recover_action', "WORKFLOW")
             fencing = pd.get('fencing', None)
             if recover_action is not None:
                 inputs['operation'] = recover_action[0]['name']
