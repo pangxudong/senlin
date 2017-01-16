@@ -14,6 +14,7 @@ import base64
 import copy
 
 from oslo_utils import encodeutils
+from oslo_serialization import jsonutils
 import six
 
 from senlin.common import constraints
@@ -21,6 +22,7 @@ from senlin.common import exception as exc
 from senlin.common.i18n import _
 from senlin.common import schema
 from senlin.profiles import base
+from senlin.drivers import base as driver_base
 
 
 class ServerProfile(base.Profile):
@@ -245,6 +247,7 @@ class ServerProfile(base.Profile):
     def __init__(self, type_name, name, **kwargs):
         super(ServerProfile, self).__init__(type_name, name, **kwargs)
         self.server_id = None
+        self._workflowclient = None
 
     def _validate_az(self, obj, az_name, reason=None):
         try:
@@ -1015,10 +1018,49 @@ class ServerProfile(base.Profile):
 
         return True
 
+    def do_workflow(self, obj, workflow_name, **params):
+        if not obj.physical_id:
+            return False
+
+        self.server_id = obj.physical_id
+        wfc = self.workflow()
+        def_path = params.pop('definition')
+        input_dict = {
+            'cluster_id': obj.cluster_id,
+            'node_id': obj.physical_id,
+        }
+        input_dict.update(params)
+
+        try:
+            workflow = wfc.workflow_find(workflow_name)
+            if workflow is None:
+                definition = open(def_path, 'r').read()
+                wfc.workflow_create(definition, scope="private")
+
+            input_str = jsonutils.dumps(input_dict)
+
+            execution = wfc.execution_create(workflow_name, input_str)
+            wait_for_execution(execution.id)
+            output = wfc.execution_find(execution.id).output
+        except exception.InternalError as ex:
+            raise exception.EResourceUpdate(type='server', id=obj.physical_id,
+                                      message=six.text_type(ex))
+
+        return jsonutils.loads(output)["vm_id"][0]["uuid"]
+
+    def workflow(self):
+            if self._workflowclient is not None:
+                return self._workflowclient
+            params = self._build_conn_params(self.user, self.project)
+            self._workflowclient = driver_base.SenlinDriver().workflow(params)
+            return self._workflowclient
+
     def do_recover(self, obj, **options):
         # NOTE: We do a 'get' not a 'pop' here, because the operations may
         #       get fall back to the base class for handling
         operation = options.get('operation', None)
+        operation_type = options.get('type', None)
+        operaiton_params = options.get('params', None)
 
         if operation and not isinstance(operation, six.string_types):
             operation = operation[0]
@@ -1027,8 +1069,8 @@ class ServerProfile(base.Profile):
         # Depends-On: https://review.openstack.org/#/c/359676/
         if operation == 'REBUILD':
             return self.do_rebuild(obj)
-
-        return super(ServerProfile, self).do_recover(obj, **options)
+        elif operation_type == 'WORKFLOW':
+            return self.do_workflow(obj, operation, **operaiton_params)
 
     def handle_reboot(self, obj, **options):
         """Handler for the reboot operation."""
