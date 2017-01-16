@@ -26,3 +26,4 @@ message = zaqar_v2.ZaqarClient
 network = neutron_v2.NeutronClient
 orchestration = heat_v1.HeatClient
 telemetry = ceilometer_v2.CeilometerClient
+workflow = mistral_v2.MistralClient
