@@ -17,6 +17,7 @@ from senlin.drivers.openstack import lbaas
 from senlin.drivers.openstack import neutron_v2
 from senlin.drivers.openstack import nova_v2
 from senlin.drivers.openstack import zaqar_v2
+from senlin.drivers.openstack import mistral_v2
 
 
 compute = nova_v2.NovaClient
