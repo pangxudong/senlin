@@ -16,14 +16,14 @@ cluster-coldmigration:
         list_vms:
             action: nova.servers_list
             publish:
-                vms: <% $.list_vms %>
+                vms: <% task(list_vms).result %>
             on-success: filter_vms
 
         filter_vms:
             with-items: vm in <% $.vms %>
             action: custom.filter_vm flavor=<% $.vm.flavor.id %> metadata=<% $.vm.metadata %> uuid=<% $.vm.id %> cluster_id=<% $.cluster_id %> node_id=<% $.node_id %>
             publish:
-                filtered_vms: <% $.filter_vms %>
+                filtered_vms: <% task(filter_vms).result %>
             on-success: check_flavor
             retry:
                 delay: 5
