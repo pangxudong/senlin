@@ -1,8 +1,7 @@
 """
 FilterVmAction - custom action.
 
-Simple action for filtering VM on the presence of metadata/extra spec
-"cluster" flag
+Simple action for filtering VM on the presence of metadata "cluster_id"
 """
 from mistral.actions.openstack.actions import NovaAction
 from mistral.workflow.utils import Result
@@ -14,8 +13,7 @@ class FilterVmException(Exception):
 
 class FilterVmAction(NovaAction):
     """
-    Filter and return VMs whith the flag 'cluster' either on vm metadtata
-    or flavor extra spec.
+    Filter and return VMs whith the flag 'cluster_id' either on vm metadtata.
     """
 
     def __init__(self, metadata, flavor, uuid, cluster_id, node_id):
@@ -31,27 +29,9 @@ class FilterVmAction(NovaAction):
         client = self._get_client()
         metadata = self._metadata
 
-        if str(metadata.get('cluster')) == str(self._cluster_id):
+        if str(metadata.get('cluster_id')) == str(self._cluster_id):
             if str(self._uuid) == str(self._node_id):
                 hypervisor_hostname = client.servers.find(id=self._uuid).to_dict()['OS-EXT-SRV-ATTR:hypervisor_hostname']
                 return Result(data={'migrate': True, 'uuid': self._uuid, 'hypervisor_hostname': hypervisor_hostname})
-
-        # Ether is no metadata for vm - check flavor.
-        try:
-            # Maybe this should be done in different action
-            # only once per whole workflow.
-            # In case there is ~100 VMs to cluster_id, there will be
-            # the same amount of calls to nova API.
-            flavor = filter(
-                lambda f: f.id == self._flavor,
-                client.flavors.list()
-            )[0]
-        except IndexError:
-            raise FilterVmException('Flavor not found')
-
-        cluster_id = flavor.get_keys().get('cluster_id:cluster_id')
-
-        if str(cluster_id) == str(self._cluster_id):
-            return Result(data={'migrate': True, 'uuid': self._uuid})
 
         return Result(data={'migrate': False, 'uuid': self._uuid, 'hypervisor_hostname': ""})
