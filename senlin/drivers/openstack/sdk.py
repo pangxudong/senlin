@@ -13,7 +13,6 @@
 '''
 SDK Client
 '''
-import sys
 
 import functools
 from oslo_config import cfg
@@ -32,8 +31,6 @@ from senlin.common import exception as senlin_exc
 USER_AGENT = 'senlin'
 exc = sdk_exc
 LOG = logging.getLogger(__name__)
-
-sdk_utils.enable_logging(debug=False, stream=sys.stdout)
 
 
 def parse_exception(ex):
