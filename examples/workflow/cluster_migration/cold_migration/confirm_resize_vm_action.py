@@ -1,5 +1,4 @@
 from mistral.actions.openstack.actions import NovaAction
-from mistral.workflow.utils import Result
 
 class ConfirmResizeVmAction(NovaAction):
 
