@@ -17,5 +17,5 @@ mistral.actions =
 ### rebuild mistral & update db
 ```
 $ sudo pip install -e .
-$ mistral-db-manage --config-file etc/mistral.conf populate
+$ python tools/sync_db.sh --config-file etc/mistral.conf
 ```
