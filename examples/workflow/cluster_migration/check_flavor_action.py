@@ -16,7 +16,7 @@ class CheckFlavorAction(NovaAction):
             flavor_dict = client.flavors.find(id=str(self._flavor_id)).to_dict()
             hypervisors = client.hypervisors.list()
             for h in hypervisors:
-                if(h.to_dict()["service"])["host"] == self._hypervisor_hostname):
+                if(h.to_dict()["service"]["host"] == self._hypervisor_hostname):
                     hypervisor = h
                     break
             limits_dict = hypervisor.to_dict()
