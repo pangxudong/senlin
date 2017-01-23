@@ -14,7 +14,12 @@ class CheckFlavorAction(NovaAction):
 
         if self._migrate:
             flavor_dict = client.flavors.find(id=str(self._flavor_id)).to_dict()
-            limits_dict = client.hypervisors.find(hypervisor_hostname=self._hypervisor_hostname).to_dict()
+            hypervisors = client.hypervisors.list()
+            for h in hypervisors:
+                if(h.to_dict()["service"])["host"] == self._hypervisor_hostname):
+                    hypervisor = h
+                    break
+            limits_dict = hypervisor.to_dict()
 
             mem = limits_dict['memory_mb'] - flavor_dict['ram']
             disk = limits_dict['free_disk_gb'] - flavor_dict['disk']

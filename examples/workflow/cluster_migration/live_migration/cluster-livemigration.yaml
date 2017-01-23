@@ -26,10 +26,18 @@ cluster-livemigration:
             action: custom.filter_vm flavor=<% $.vm.flavor.id %> metadata=<% $.vm.metadata %> uuid=<% $.vm.id %> cluster_id=<% $.cluster_id %> node_id=<% $.node_id %>
             publish:
                 filtered_vms: <% $.filter_vms %>
-            on-success: validate_host
+            on-success: check_flavor
             retry:
                 delay: 5
                 count: 10
+
+        check_flavor:
+            with-items: vm in <% $.filtered_vms %>
+            action: custom.check_flavor migrate=<% $.vm.migrate %> hypervisor_hostname=<% $.host %> flavor_id=<% $.vm.flavor_id %>
+            on-success: validate_host
+            retry:
+                delay: 5
+                count: 3
 
         validate_host:
            with-items: vm in <% $.filtered_vms %>
